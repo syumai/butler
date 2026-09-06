@@ -11,10 +11,10 @@ import com.k2fsa.sherpa.onnx.*
 import kotlin.concurrent.thread
 
 enum class WakePhrase(val asset: String, val label: String, val score: Float = 1.5f) {
-    HELLO_COMPUTER("hello-computer", "Hello Computer（ハロー・コンピューター）"),
-    HEY_BUTLER("hey-butler", "Hey Butler（ヘイ・バトラー）", 3.0f),
-    HELLO_BUTLER("hello-butler", "Hello Butler（ハロー・バトラー）", 3.0f),
-    HELLO_WORLD("keywords", "Hello World（ハロー・ワールド）"),
+    HELLO_COMPUTER("hello-computer", "Hello Computer"),
+    HEY_BUTLER("hey-butler", "Hey Butler", 3.0f),
+    HELLO_BUTLER("hello-butler", "Hello Butler", 3.0f),
+    HELLO_WORLD("keywords", "Hello World"),
 }
 
 /** Bundled local inference only. This class has no network or credential dependencies. */

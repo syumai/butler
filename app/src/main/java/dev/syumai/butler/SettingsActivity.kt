@@ -5,8 +5,12 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.res.ColorStateList
 import android.graphics.BitmapFactory
 import android.graphics.Color
+import android.graphics.drawable.Drawable
+import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.RippleDrawable
 import android.net.Uri
 import android.os.Bundle
 import android.text.InputType
@@ -17,6 +21,8 @@ import android.view.WindowInsets
 import android.view.WindowInsetsController
 import android.widget.EditText
 import android.widget.FrameLayout
+import android.widget.ImageButton
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.Switch
@@ -38,6 +44,8 @@ class SettingsActivity : Activity() {
     private var selected = 0
     private lateinit var leftPane: LinearLayout
     private lateinit var rightPane: LinearLayout
+    private val accent = Color.parseColor("#D9C6A5")
+    private val textColor = Color.rgb(245, 239, 227)
 
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
@@ -59,11 +67,17 @@ class SettingsActivity : Activity() {
     override fun onPause() { applyServiceState(); super.onPause() }
 
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
-    private fun text(size: Float, value: String = "") = TextView(this).apply { textSize = size; text = value; setTextColor(Color.rgb(245, 239, 227)) }
-    private fun button(label: String, clicked: () -> Unit) = android.widget.Button(this).apply {
-        text = label; isAllCaps = false; textSize = 12f; setTextColor(Color.WHITE)
-        backgroundTintList = android.content.res.ColorStateList.valueOf(Color.argb(170, 38, 62, 65))
-        setOnClickListener { clicked() }
+    private fun text(size: Float, value: String = "") = TextView(this).apply { textSize = size; text = value; setTextColor(textColor) }
+
+    /** Rounded-rect shape used as both a background and its ripple mask. */
+    private fun roundedShape(radius: Float, fill: Int = Color.WHITE, strokeColor: Int? = null, strokeWidth: Int = 0) = GradientDrawable().apply {
+        shape = GradientDrawable.RECTANGLE; cornerRadius = radius
+        if (strokeColor != null) { setColor(Color.TRANSPARENT); setStroke(strokeWidth, strokeColor) } else setColor(fill)
+    }
+    private fun rippleOn(content: Drawable?, radius: Float, rippleColor: Int) =
+        RippleDrawable(ColorStateList.valueOf(rippleColor), content, roundedShape(radius))
+    private fun themeDrawable(attr: Int): Drawable {
+        val out = TypedValue(); theme.resolveAttribute(attr, out, true); return getDrawable(out.resourceId)!!
     }
 
     /** If enabled and permitted, (re)start the assistant service; otherwise stop it. Mirrors the old dialog's save/dismiss behavior. */
@@ -77,19 +91,27 @@ class SettingsActivity : Activity() {
 
     private fun buildUi() {
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(Color.rgb(21, 39, 42)) }
-        val topBar = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(12), dp(8), dp(12), dp(8)) }
-        topBar.addView(button("← 戻る") { finish() }, LinearLayout.LayoutParams(dp(90), dp(40)))
-        topBar.addView(text(18f, "設定").apply { setPadding(dp(16), 0, 0, 0) }, LinearLayout.LayoutParams(0, -2, 1f))
-        root.addView(topBar)
-        val divider = View(this).apply { setBackgroundColor(Color.argb(80, 255, 255, 255)) }
-        root.addView(divider, LinearLayout.LayoutParams(-1, 1))
+        val topBar = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(4), 0, dp(16), 0) }
+        val back = ImageButton(this).apply {
+            setImageResource(R.drawable.ic_arrow_back); scaleType = ImageView.ScaleType.CENTER
+            background = themeDrawable(android.R.attr.selectableItemBackgroundBorderless)
+            contentDescription = "戻る"
+            setOnClickListener { finish() }
+        }
+        // Back button and title share the same 48dp height basis so their vertical centers line up exactly.
+        topBar.addView(back, LinearLayout.LayoutParams(dp(48), dp(48)))
+        topBar.addView(text(20f, "設定").apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(12), 0, 0, 0) },
+            LinearLayout.LayoutParams(0, dp(48), 1f))
+        root.addView(topBar, LinearLayout.LayoutParams(-1, dp(56)))
+        val divider = View(this).apply { setBackgroundColor(Color.argb(60, 255, 255, 255)) }
+        root.addView(divider, LinearLayout.LayoutParams(-1, dp(1).coerceAtLeast(1)))
         val body = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        leftPane = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, dp(4), 0, dp(4)) }
+        leftPane = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, dp(8), 0, dp(8)) }
         val leftScroll = ScrollView(this).apply { addView(leftPane) }
-        body.addView(leftScroll, LinearLayout.LayoutParams(dp(230), -1))
-        val vDivider = View(this).apply { setBackgroundColor(Color.argb(60, 255, 255, 255)) }
+        body.addView(leftScroll, LinearLayout.LayoutParams(dp(240), -1))
+        val vDivider = View(this).apply { setBackgroundColor(Color.argb(50, 255, 255, 255)) }
         body.addView(vDivider, LinearLayout.LayoutParams(1, -1))
-        rightPane = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, dp(4), 0, dp(4)) }
+        rightPane = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, dp(8), 0, dp(8)) }
         val rightScroll = ScrollView(this).apply { addView(rightPane) }
         body.addView(rightScroll, LinearLayout.LayoutParams(0, -1, 1f))
         root.addView(body, LinearLayout.LayoutParams(-1, 0, 1f))
@@ -100,55 +122,72 @@ class SettingsActivity : Activity() {
 
     private fun renderCategories() {
         leftPane.removeAllViews()
+        val radius = dp(8).toFloat()
         categories.forEachIndexed { i, name ->
+            val isSelected = i == selected
             val row = TextView(this).apply {
-                text = name; textSize = 15f; setTextColor(Color.WHITE)
-                setPadding(dp(20), dp(16), dp(20), dp(16))
-                setBackgroundColor(if (i == selected) Color.argb(210, 46, 110, 118) else Color.TRANSPARENT)
+                text = name; textSize = 16f
+                setTextColor(if (isSelected) accent else textColor)
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(16), 0, dp(16), 0)
+                background = if (isSelected) {
+                    rippleOn(roundedShape(radius, fill = Color.argb(51, Color.red(accent), Color.green(accent), Color.blue(accent))), radius, Color.argb(60, 255, 255, 255))
+                } else {
+                    themeDrawable(android.R.attr.selectableItemBackground)
+                }
                 isClickable = true; isFocusable = true
                 setOnClickListener { if (selected != i) { selected = i; renderCategories(); renderCategory(selected) } }
             }
-            leftPane.addView(row, LinearLayout.LayoutParams(-1, -2))
+            leftPane.addView(row, LinearLayout.LayoutParams(-1, dp(48)).apply {
+                leftMargin = dp(8); rightMargin = dp(8); topMargin = dp(2); bottomMargin = dp(2)
+            })
         }
     }
 
     private fun addDivider(container: LinearLayout) {
-        container.addView(View(this).apply { setBackgroundColor(Color.argb(50, 255, 255, 255)) }, LinearLayout.LayoutParams(-1, dp(1).coerceAtLeast(1)))
+        container.addView(View(this).apply { setBackgroundColor(Color.argb(31, 255, 255, 255)) },
+            LinearLayout.LayoutParams(-1, dp(1).coerceAtLeast(1)).apply { marginStart = dp(16) })
     }
 
     private fun addRow(container: LinearLayout, title: String, summary: String, enabled: Boolean = true, onClick: (() -> Unit)? = null) {
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(20), dp(10), dp(20), dp(10)); minimumHeight = dp(56)
-            alpha = if (enabled) 1f else 0.55f
+            setPadding(dp(16), dp(10), dp(16), dp(10)); minimumHeight = dp(64)
+            alpha = if (enabled) 1f else 0.38f
             if (onClick != null && enabled) {
-                val out = TypedValue()
-                theme.resolveAttribute(android.R.attr.selectableItemBackground, out, true)
-                isClickable = true; isFocusable = true; setBackgroundResource(out.resourceId)
+                isClickable = true; isFocusable = true; background = themeDrawable(android.R.attr.selectableItemBackground)
                 setOnClickListener { onClick() }
             }
         }
         row.addView(text(16f, title))
-        if (summary.isNotEmpty()) row.addView(text(13f, summary).apply { setTextColor(Color.rgb(185, 195, 195)); setPadding(0, dp(3), 0, 0) })
+        if (summary.isNotEmpty()) row.addView(text(14f, summary).apply { setTextColor(Color.argb(178, 245, 239, 227)); setPadding(0, dp(3), 0, 0) })
         container.addView(row, LinearLayout.LayoutParams(-1, -2))
         addDivider(container)
     }
 
     private fun addSwitchRow(container: LinearLayout, title: String, checked: Boolean, onToggle: (Boolean) -> Unit) {
-        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(20), dp(10), dp(20), dp(10)); minimumHeight = dp(56) }
+        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(16), dp(10), dp(16), dp(10)); minimumHeight = dp(64) }
         row.addView(text(16f, title), LinearLayout.LayoutParams(0, -2, 1f))
         row.addView(Switch(this).apply { isChecked = checked; setOnCheckedChangeListener { _, isChecked -> onToggle(isChecked) } })
         container.addView(row, LinearLayout.LayoutParams(-1, -2))
         addDivider(container)
     }
 
-    /** Compact single-EditText dialog (soft keyboard covers a lot on this 480px-tall screen). onSave returns false to keep the dialog open with a Toast. */
-    private fun showEditDialog(title: String, initial: String, secret: Boolean, inputType: Int, onClear: (() -> Unit)? = null, onSave: (String) -> Boolean) {
+    /**
+     * Compact single-EditText dialog (soft keyboard covers a lot on this 480px-tall screen).
+     * [helper], when given, is shown as a small caption below the field (e.g. valid ranges).
+     * onSave returns false to keep the dialog open with a Toast.
+     */
+    private fun showEditDialog(title: String, initial: String, secret: Boolean, inputType: Int, helper: String? = null, onClear: (() -> Unit)? = null, onSave: (String) -> Boolean) {
         val edit = EditText(this).apply {
             setSingleLine(true); this.inputType = inputType; setTextColor(Color.WHITE)
             if (secret) hint = "変更する場合だけ入力（保存済みの値は表示しません）" else setText(initial)
         }
-        val container = FrameLayout(this).apply { setPadding(dp(24), dp(8), dp(24), 0); addView(edit) }
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; setPadding(dp(24), dp(8), dp(24), 0)
+            addView(edit)
+            if (helper != null) addView(text(12f, helper).apply { setTextColor(Color.argb(153, 245, 239, 227)); setPadding(0, dp(6), 0, 0) })
+        }
         val builder = AlertDialog.Builder(this).setTitle(title).setView(container)
             .setPositiveButton("保存", null).setNegativeButton("キャンセル", null)
         if (onClear != null) builder.setNeutralButton("削除", null)
@@ -192,8 +231,9 @@ class SettingsActivity : Activity() {
                 if (value.isBlank()) false else { settings.set("searchModel", value); applyServiceState(); renderCategory(selected); true }
             }
         }
-        addRow(rightPane, "会話終了までの無発話秒数（5〜600）", "${settings.get("timeout", "30")} 秒") {
-            showEditDialog("会話終了までの無発話秒数（5〜600）", settings.get("timeout", "30"), secret = false, inputType = InputType.TYPE_CLASS_NUMBER) { value ->
+        addRow(rightPane, "無発話で会話を終了するまでの秒数", "${settings.get("timeout", "30")} 秒") {
+            showEditDialog("無発話で会話を終了するまでの秒数", settings.get("timeout", "30"), secret = false, inputType = InputType.TYPE_CLASS_NUMBER,
+                helper = "5〜600 の秒数") { value ->
                 val ok = runCatching { require(value.toLong() in 5..600) }.isSuccess
                 if (!ok) false else { settings.set("timeout", value); applyServiceState(); renderCategory(selected); true }
             }
@@ -202,10 +242,11 @@ class SettingsActivity : Activity() {
 
     private fun renderWake() {
         addSwitchRow(rightPane, "呼びかけを待つ", settings.enabled) { checked -> settings.enabled = checked; applyServiceState(); renderCategory(selected) }
-        addRow(rightPane, "呼びかけの言葉", "Hey Butler（現在は固定です）", enabled = false)
-        addRow(rightPane, "呼びかけ検知のしきい値（0.05〜0.9、小さいほど検知しやすい）", settings.get("wakeThreshold", "0.25")) {
-            showEditDialog("呼びかけ検知のしきい値（0.05〜0.9）", settings.get("wakeThreshold", "0.25"), secret = false,
-                inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL) { value ->
+        addRow(rightPane, "呼びかけの言葉", "Hey Butler", enabled = false)
+        addRow(rightPane, "検知のしきい値", settings.get("wakeThreshold", "0.25")) {
+            showEditDialog("検知のしきい値", settings.get("wakeThreshold", "0.25"), secret = false,
+                inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL,
+                helper = "0.05〜0.9。小さいほど検知しやすい") { value ->
                 val ok = runCatching { require(value.toFloat() in 0.05f..0.9f) }.isSuccess
                 if (!ok) false else { settings.set("wakeThreshold", value); applyServiceState(); renderCategory(selected); true }
             }
@@ -213,21 +254,23 @@ class SettingsActivity : Activity() {
     }
 
     private fun renderWeatherBackground() {
-        addRow(rightPane, "天気の地域名（表示用）", settings.get("location").ifBlank { "未設定" }) {
-            showEditDialog("天気の地域名（表示用）", settings.get("location"), secret = false, inputType = InputType.TYPE_CLASS_TEXT) { value ->
+        addRow(rightPane, "地域名", settings.get("location").ifBlank { "未設定" }) {
+            showEditDialog("地域名", settings.get("location"), secret = false, inputType = InputType.TYPE_CLASS_TEXT) { value ->
                 settings.set("location", value); Settings.dirty = true; renderCategory(selected); true
             }
         }
-        addRow(rightPane, "緯度（-90〜90）", settings.get("latitude").ifBlank { "未設定" }) {
-            showEditDialog("緯度（-90〜90）", settings.get("latitude"), secret = false,
-                inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL or InputType.TYPE_NUMBER_FLAG_SIGNED) { value ->
+        addRow(rightPane, "緯度", settings.get("latitude").ifBlank { "未設定" }) {
+            showEditDialog("緯度", settings.get("latitude"), secret = false,
+                inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL or InputType.TYPE_NUMBER_FLAG_SIGNED,
+                helper = "-90〜90") { value ->
                 val ok = value.isBlank() || runCatching { require(value.toDouble() in -90.0..90.0) }.isSuccess
                 if (!ok) false else { settings.set("latitude", value); Settings.dirty = true; renderCategory(selected); true }
             }
         }
-        addRow(rightPane, "経度（-180〜180）", settings.get("longitude").ifBlank { "未設定" }) {
-            showEditDialog("経度（-180〜180）", settings.get("longitude"), secret = false,
-                inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL or InputType.TYPE_NUMBER_FLAG_SIGNED) { value ->
+        addRow(rightPane, "経度", settings.get("longitude").ifBlank { "未設定" }) {
+            showEditDialog("経度", settings.get("longitude"), secret = false,
+                inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL or InputType.TYPE_NUMBER_FLAG_SIGNED,
+                helper = "-180〜180") { value ->
                 val ok = value.isBlank() || runCatching { require(value.toDouble() in -180.0..180.0) }.isSuccess
                 if (!ok) false else { settings.set("longitude", value); Settings.dirty = true; renderCategory(selected); true }
             }
@@ -249,8 +292,9 @@ class SettingsActivity : Activity() {
 
     private fun renderIntegration() {
         addRow(rightPane, "Home Assistant URL", settings.get("haUrl").ifBlank { "未設定" }) {
-            showEditDialog("Home Assistant URL（同一LAN内。ホスト名よりIP直指定の方がこの端末では安定します）", settings.get("haUrl"), secret = false,
-                inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI) { value ->
+            showEditDialog("Home Assistant URL", settings.get("haUrl"), secret = false,
+                inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI,
+                helper = "同一LAN内。ホスト名より IP 直指定が安定します") { value ->
                 val trimmed = value.trimEnd('/')
                 val ok = trimmed.isBlank() || trimmed.startsWith("http://") || trimmed.startsWith("https://")
                 if (!ok) false else { settings.set("haUrl", trimmed); applyServiceState(); renderCategory(selected); true }
@@ -280,8 +324,9 @@ class SettingsActivity : Activity() {
                 }
             }.start()
         }
-        addRow(rightPane, "公開MCPサーバーURL（HTTPS）", settings.get("mcpUrl").ifBlank { "未設定" }) {
-            showEditDialog("公開MCPサーバーURL（HTTPS）", settings.get("mcpUrl"), secret = false, inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI) { value ->
+        addRow(rightPane, "MCP サーバー URL", settings.get("mcpUrl").ifBlank { "未設定" }) {
+            showEditDialog("MCP サーバー URL", settings.get("mcpUrl"), secret = false, inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI,
+                helper = "公開 HTTPS URL") { value ->
                 val ok = value.isBlank() || (Uri.parse(value).scheme == "https" && !Uri.parse(value).host.isNullOrBlank())
                 if (!ok) false else { settings.set("mcpUrl", value); applyServiceState(); renderCategory(selected); true }
             }

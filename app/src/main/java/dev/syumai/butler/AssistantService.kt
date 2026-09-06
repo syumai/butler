@@ -90,7 +90,7 @@ class AssistantService : Service() {
             status = "端末内の音声検知を準備中…"
             val id = wakeGeneration
             wake = LocalWakeWordEngine(this, wakeModels, settings.get("wakeThreshold", "0.25").toFloatOrNull()?.coerceIn(0.05f, 0.9f) ?: 0.25f, settings.wakePhrase,
-                ready = { if (id == wakeGeneration) status = message ?: "${settings.wakePhrase.label} と呼んでください（端末内検知）" },
+                ready = { if (id == wakeGeneration) status = message ?: "${settings.wakePhrase.label} と呼んでください" },
                 detected = { if (id == wakeGeneration) { wake = null; WakeChime.play(this); begin(woken = true) } },
                 failed = { if (id == wakeGeneration) { wake = null; status = "端末内検知を開始できません。マイク権限を確認してください" } })
             wake!!.start()
