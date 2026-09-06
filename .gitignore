@@ -1,0 +1,10 @@
+.gradle/
+.tools/
+**/build/
+local.properties
+*.ppn
+*.pv
+*.jks
+.DS_Store
+app/libs/*.aar
+app/src/main/assets/wake/*.onnx
