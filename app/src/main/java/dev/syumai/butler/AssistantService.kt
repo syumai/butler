@@ -3,7 +3,7 @@ package dev.syumai.butler
 import android.app.*
 import android.content.Intent
 import android.os.*
-import org.json.JSONArray
+import dev.syumai.butler.tools.ToolRegistry
 import org.json.JSONObject
 import java.util.concurrent.Executors
 
@@ -25,7 +25,8 @@ class AssistantService : Service() {
     private var realtime: RealtimeClient? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private val worker = Executors.newSingleThreadExecutor()
-    private var tools = ToolClient()
+    private var client = ToolClient()
+    private lateinit var registry: ToolRegistry
     private var generation = 0
     private var wakeGeneration = 0
     private var ready = false
@@ -118,7 +119,7 @@ class AssistantService : Service() {
             generation++; transcript = ""; citations = ""; approval = null
             ready = false; speaking = false; responding = false; playing = false; pending = 0; calls = 0
             followup = false; ending = false; handled.clear(); mcpPending.clear(); startedAt = SystemClock.elapsedRealtime(); busySince = 0
-            idle = IdlePolicy(settings.timeoutSeconds * 1000); tools = ToolClient()
+            idle = IdlePolicy(settings.timeoutSeconds * 1000); client = ToolClient(); registry = ToolRegistry(settings, client)
             status = "接続中…"
             val id = generation
             realtime = RealtimeClient(this, settings, { if (generation == id) runCatching { onEvent(it) }.onFailure { error ->
@@ -129,28 +130,9 @@ class AssistantService : Service() {
             }
         } catch (_: Exception) { finish("音声接続を開始できませんでした") }
     }
-    private fun definitions(): JSONArray {
-        val defs = JSONArray().put(JSONObject().put("type", "function").put("name", "search_web")
-            .put("description", "最新情報をインターネットで検索する")
-            .put("parameters", JSONObject("""{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}""")))
-            .put(JSONObject().put("type", "function").put("name", "end_conversation").put("description", "ユーザーが会話の終了を求めたとき、短く別れの挨拶をしてから終了する")
-                .put("parameters", JSONObject("""{"type":"object","properties":{}}""")))
-        if (settings.get("haUrl").isNotBlank() && settings.secret("haToken").isNotBlank()) {
-            defs.put(JSONObject().put("type", "function").put("name", "home_assistant")
-                .put("description", "自宅のHome Assistantで家電・照明・スイッチ・エアコンなどを操作したり、その状態を調べたりする。ユーザーの要望を日本語の短い命令文または質問文にして text に渡す（例: リビングの電気を消して / 寝室の温度は？）。鍵の解錠や高額・危険な操作はユーザーに口頭で確認してから呼ぶ。")
-                .put("parameters", JSONObject("""{"type":"object","properties":{"text":{"type":"string"}},"required":["text"]}""")))
-        }
-        val url = settings.get("mcpUrl")
-        if (url.isNotBlank()) {
-            val mcp = JSONObject().put("type", "mcp").put("server_label", "configured_server").put("server_url", url).put("require_approval", "always")
-            settings.secret("mcpToken").takeIf { it.isNotBlank() }?.let { mcp.put("authorization", it) }
-            defs.put(mcp)
-        }
-        return defs
-    }
     private fun onEvent(e: JSONObject) {
         when (e.optString("type")) {
-            "session.created" -> realtime?.send(JSONObject().put("type", "session.update").put("session", JSONObject().put("type", "realtime").put("tools", definitions())))
+            "session.created" -> realtime?.send(JSONObject().put("type", "session.update").put("session", JSONObject().put("type", "realtime").put("tools", registry.definitions())))
             "session.updated" -> { if (!ready) { ready = true; realtime?.enableMicrophone(); status = "お話しください" } }
             "input_audio_buffer.speech_started" -> { if (!ending) { speaking = true; status = "聞いています"; idle.update(SystemClock.elapsedRealtime(), true) } }
             "input_audio_buffer.speech_stopped" -> speaking = false
@@ -177,17 +159,13 @@ class AssistantService : Service() {
                     return
                 }
                 val name = e.optString("name")
-                pending++; followup = true; status = if (name == "home_assistant") "家電を操作中…" else "検索中…"
+                val tool = registry.find(name)
+                pending++; followup = true; status = tool?.busyStatus ?: "検索中…"
                 val id = generation
-                val toolClient = tools
                 worker.execute {
                     val result = runCatching {
                         val args = JSONObject(e.getString("arguments"))
-                        when (name) {
-                            "search_web" -> toolClient.search(settings, args.getString("query"))
-                            "home_assistant" -> toolClient.homeAssistant(settings, args.getString("text"))
-                            else -> error("unknown tool $name")
-                        }
+                        tool?.execute(args) ?: error("unknown tool $name")
                     }.getOrElse { JSONObject().put("error", "ツールを実行できませんでした。結果を推測しないでください。") }
                     main.post {
                         if (generation != id) return@post
@@ -243,12 +221,12 @@ class AssistantService : Service() {
         }
     }
     private fun finish(message: String? = null) {
-        generation++; preparing = false; conversing = false; ending = false; tools.cancel(); realtime?.close(); realtime = null
+        generation++; preparing = false; conversing = false; ending = false; client.cancel(); realtime?.close(); realtime = null
         transcript = ""; citations = ""; approval = null
         waitForWake(message)
     }
     override fun onDestroy() {
-        destroyed = true; preparing = false; conversing = false; generation++; main.removeCallbacksAndMessages(null); tools.cancel(); realtime?.close(); realtime = null
+        destroyed = true; preparing = false; conversing = false; generation++; main.removeCallbacksAndMessages(null); client.cancel(); realtime?.close(); realtime = null
         wakeGeneration++
         val oldWake = wake; wake = null
         val releaseModel = { kotlin.concurrent.thread(name = "Butler-release-model") { wakeModels.close() }; Unit }

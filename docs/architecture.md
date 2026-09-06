@@ -38,7 +38,7 @@ The detection threshold is configurable. The English keyword and Japanese conver
 
 ## Tools and MCP
 
-`ToolRegistry` registers the schema, execution logic, approval policy, and cancel/expiry for each tool.
+Executable tools live in `dev.syumai.butler.tools`: a `Tool` interface (`name`, `busyStatus`, `definition()`, `execute()`) plus one class per tool (`SearchWebTool`, `HomeAssistantTool`), each wrapping `ToolClient`. `ToolRegistry` builds the available tool list from `Settings` (`HomeAssistantTool` only when both the Home Assistant URL and token are set), dispatches a function call by name (`find`), and assembles the full Realtime `tools` array via `definitions()` — the executable tools, then `end_conversation` (kept as a plain JSON constant on the registry rather than a `Tool`, since it is conversation control flow with nothing to execute), then the optional hosted MCP tool. Adding a tool means adding a class here and listing it in `ToolRegistry`; `AssistantService` itself never changes.
 
 - Web search: a proposed approach calls Responses API web search from a Realtime function tool. Only the necessary query is passed, and the results and citations are returned into the voice conversation. Links are shown on screen. The exact request schema will be validated during implementation.
 - Weather: the home display and conversation use the same weather-fetching layer. Region, coordinates, time zone, and fetch timestamp are managed, and the last fetch time is shown when offline. The provider is not yet selected.
