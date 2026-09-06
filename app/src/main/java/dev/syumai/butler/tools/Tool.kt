@@ -9,8 +9,8 @@ import org.json.JSONObject
 interface Tool {
     /** Must match the "name" in [definition] and the function-call name the model sends back. */
     val name: String
-    /** Status text shown while [execute] is running on the worker thread. */
-    val busyStatus: String
+    /** String resource id for the status text shown while [execute] is running on the worker thread. */
+    val busyStatus: Int
     /** The Realtime function tool definition ("type", "name", "description", "parameters"). */
     fun definition(): JSONObject
     /** Runs the tool. Called off the main thread; must not touch Android UI state. */
