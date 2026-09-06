@@ -17,11 +17,11 @@ class ToolClient {
         check(!source.request(1_000_001)) { "Response too large" }
         JSONObject(source.readUtf8())
     }
-    fun search(settings: Settings, query: String): JSONObject {
+    fun search(settings: Settings, input: String): JSONObject {
         val body = JSONObject().put("model", settings.get("searchModel", "gpt-5.6-luna"))
             .put("store", false).put("max_output_tokens", 1800)
             .put("tools", JSONArray().put(JSONObject().put("type", "web_search")))
-            .put("tool_choice", "required").put("input", "日本語で簡潔に回答し、出典を付けてください。質問: ${query.take(2000)}")
+            .put("tool_choice", "required").put("input", input)
         val response = request(Request.Builder().url("https://api.openai.com/v1/responses")
             .header("Authorization", "Bearer ${settings.secret("openai")}")
             .post(body.toString().toRequestBody("application/json".toMediaType())).build())
@@ -35,19 +35,17 @@ class ToolClient {
     }
     fun weather(lat: Double, lon: Double): JSONObject = request(Request.Builder().url(
         "https://api.open-meteo.com/v1/forecast?latitude=$lat&longitude=$lon&current=temperature_2m,weather_code,is_day&timezone=auto").build())
-    fun homeAssistant(settings: Settings, text: String): JSONObject {
-        val body = JSONObject().put("text", text).put("language", "ja")
-        val response = runCatching {
-            request(Request.Builder().url("${settings.get("haUrl")}/api/conversation/process")
-                .header("Authorization", "Bearer ${settings.secret("haToken")}")
-                .post(body.toString().toRequestBody("application/json".toMediaType())).build(), haHttp)
-        }.getOrElse { return JSONObject().put("error", "Home Assistantに接続できません（${it.message}）") }
+    fun homeAssistant(settings: Settings, text: String, language: String): JSONObject {
+        val body = JSONObject().put("text", text).put("language", language)
+        val response = request(Request.Builder().url("${settings.get("haUrl")}/api/conversation/process")
+            .header("Authorization", "Bearer ${settings.secret("haToken")}")
+            .post(body.toString().toRequestBody("application/json".toMediaType())).build(), haHttp)
         return parseAssist(response)
     }
 }
 /** Pure parsing of a Home Assistant /api/conversation/process response into a compact model-facing result. */
 fun parseAssist(json: JSONObject): JSONObject {
-    val response = json.optJSONObject("response") ?: return JSONObject().put("error", "Home Assistantの応答を解析できません")
+    val response = json.optJSONObject("response") ?: return JSONObject().put("error", "Cannot parse Home Assistant response")
     val type = response.optString("response_type")
     val speech = response.optJSONObject("speech")?.optJSONObject("plain")?.optString("speech").orEmpty()
     val result = JSONObject().put("speech", speech).put("type", type)

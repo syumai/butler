@@ -90,7 +90,7 @@ object AudioSmoke {
                         "output_audio_buffer.stopped" -> { playbackStopped = true; maybeFinish() }
                         "error" -> { error.set("API error: ${event.optJSONObject("error")?.optString("code")}"); finished.countDown() }
                     }
-                }, { error.set(it); finished.countDown() })
+                }, { error.set(it.resolve(test.targetContext)); finished.countDown() })
                 client!!.start()
                 main.post(sampleOutput)
             }

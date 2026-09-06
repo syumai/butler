@@ -4,18 +4,19 @@ package dev.syumai.butler
  * The OpenAI Realtime API's output voices. OpenAI recommends marin or cedar for the most natural
  * results; the others are also supported by the API. Note the API fixes the voice for a session
  * once it has produced any audio, so a change here only takes effect on the next conversation.
+ * [labelRes] points at the localized display name in strings.xml (English/Japanese).
  */
-enum class Voice(val id: String, val label: String) {
-    MARIN("marin", "Marin（推奨・落ち着いた声）"),
-    CEDAR("cedar", "Cedar（推奨・自然な会話調）"),
-    ALLOY("alloy", "Alloy"),
-    ASH("ash", "Ash"),
-    BALLAD("ballad", "Ballad"),
-    CORAL("coral", "Coral"),
-    ECHO("echo", "Echo"),
-    SAGE("sage", "Sage"),
-    SHIMMER("shimmer", "Shimmer"),
-    VERSE("verse", "Verse");
+enum class Voice(val id: String, val labelRes: Int) {
+    MARIN("marin", R.string.voice_marin),
+    CEDAR("cedar", R.string.voice_cedar),
+    ALLOY("alloy", R.string.voice_alloy),
+    ASH("ash", R.string.voice_ash),
+    BALLAD("ballad", R.string.voice_ballad),
+    CORAL("coral", R.string.voice_coral),
+    ECHO("echo", R.string.voice_echo),
+    SAGE("sage", R.string.voice_sage),
+    SHIMMER("shimmer", R.string.voice_shimmer),
+    VERSE("verse", R.string.voice_verse);
 
     companion object {
         val DEFAULT = MARIN

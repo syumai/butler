@@ -43,13 +43,16 @@ class MainActivity : Activity() {
     private var weatherInFlight = false
     private var visible = false
     private var pendingAction = AssistantService.START
+    private val clockFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
+    private val dateFormat = SimpleDateFormat(
+        android.text.format.DateFormat.getBestDateTimePattern(Locale.getDefault(), "EEEEMMMMd"), Locale.getDefault())
     private val tick = object : Runnable {
         override fun run() {
             if (!visible) return
             val now = Date()
-            clock.updateText(SimpleDateFormat("HH:mm", Locale.JAPAN).format(now))
-            date.updateText(SimpleDateFormat("M月d日 EEEE", Locale.JAPAN).format(now))
-            status.updateText(AssistantService.status)
+            clock.updateText(clockFormat.format(now))
+            date.updateText(dateFormat.format(now))
+            status.updateText(AssistantService.status.resolve(this@MainActivity))
             transcript.updateText(AssistantService.transcript)
             approve.visibility = if (AssistantService.approval != null) View.VISIBLE else View.GONE
             end.visibility = if (AssistantService.conversing) View.VISIBLE else View.GONE
@@ -125,7 +128,7 @@ class MainActivity : Activity() {
         val settingsButton = ImageButton(this).apply {
             setImageResource(R.drawable.ic_settings); scaleType = ImageView.ScaleType.CENTER
             background = borderlessRippleBackground()
-            contentDescription = "設定"
+            contentDescription = getString(R.string.settings_button_description)
             setOnClickListener { startActivity(Intent(this@MainActivity, SettingsActivity::class.java)) }
         }
         header.addView(settingsButton, LinearLayout.LayoutParams(dp(48), dp(48)))
@@ -133,7 +136,7 @@ class MainActivity : Activity() {
         clock = text(88f).apply { typeface = Typeface.create("sans-serif-thin", Typeface.NORMAL); includeFontPadding = false }
         column.addView(clock)
         date = text(17f); column.addView(date)
-        weather = text(14f, "天気の地域を設定してください").apply { setPadding(0, dp(12), 0, 0); setOnClickListener {
+        weather = text(14f, getString(R.string.weather_placeholder_not_set)).apply { setPadding(0, dp(12), 0, 0); setOnClickListener {
             startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://open-meteo.com/")))
         } }
         column.addView(weather)
@@ -144,13 +147,13 @@ class MainActivity : Activity() {
         // so their top/bottom edges line up regardless of label length; gravity centers them within the row.
         val controlHeight = dp(56)
         val controls = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(8), 0, 0) }
-        talk = filledButton("話しかける", 22f, Color.argb(230, 46, 110, 118)) { action(AssistantService.TALK) }
+        talk = filledButton(getString(R.string.home_talk), 22f, Color.argb(230, 46, 110, 118)) { action(AssistantService.TALK) }
         controls.addView(talk, LinearLayout.LayoutParams(0, controlHeight, 1f))
-        end = outlinedButton("会話終了", 16f, Color.rgb(217, 198, 165)) { action(AssistantService.END) }.apply { visibility = View.GONE }
+        end = outlinedButton(getString(R.string.home_end_conversation), 16f, Color.rgb(217, 198, 165)) { action(AssistantService.END) }.apply { visibility = View.GONE }
         controls.addView(end, LinearLayout.LayoutParams(dp(120), controlHeight).apply { marginStart = dp(8) })
-        controls.addView(outlinedButton("出典", 16f, Color.argb(160, 217, 198, 165)) { showSources() },
+        controls.addView(outlinedButton(getString(R.string.home_sources), 16f, Color.argb(160, 217, 198, 165)) { showSources() },
             LinearLayout.LayoutParams(-2, controlHeight).apply { marginStart = dp(8) })
-        approve = outlinedButton("実行を確認", 16f, Color.argb(160, 217, 198, 165)) { showApproval() }.apply { visibility = View.GONE }
+        approve = outlinedButton(getString(R.string.home_confirm_execution), 16f, Color.argb(160, 217, 198, 165)) { showApproval() }.apply { visibility = View.GONE }
         controls.addView(approve, LinearLayout.LayoutParams(-2, controlHeight).apply { marginStart = dp(8) })
         column.addView(controls)
         setContentView(root)
@@ -165,15 +168,15 @@ class MainActivity : Activity() {
     override fun onRequestPermissionsResult(code: Int, permissions: Array<out String>, results: IntArray) {
         super.onRequestPermissionsResult(code, permissions, results)
         if (code == 10 && results.firstOrNull() == PackageManager.PERMISSION_GRANTED) action(pendingAction)
-        else Toast.makeText(this, "マイク権限が必要です。設定から再開できます。", Toast.LENGTH_LONG).show()
+        else Toast.makeText(this, getString(R.string.toast_mic_permission_required), Toast.LENGTH_LONG).show()
     }
     private fun refreshWeather() {
         if (weatherInFlight) return
         weatherAt = SystemClock.elapsedRealtime()
         val lat = settings.get("latitude").toDoubleOrNull(); val lon = settings.get("longitude").toDoubleOrNull()
-        if (lat == null || lon == null) { weather.text = "天気の地域を設定してください"; return }
+        if (lat == null || lon == null) { weather.text = getString(R.string.weather_placeholder_not_set); return }
         weatherInFlight = true
-        val place = settings.get("location", "設定地域")
+        val place = settings.get("location", getString(R.string.weather_default_place))
         worker.execute {
             var fetchedScene: WeatherScene? = null
             val result = runCatching {
@@ -181,9 +184,10 @@ class MainActivity : Activity() {
                 val code = current.getInt("weather_code")
                 val isDay = current.optInt("is_day", 1) == 1
                 fetchedScene = WeatherScene.of(code, isDay)
-                val sky = when (code) { 0 -> "晴れ"; 1, 2 -> "晴れ時々曇り"; 3 -> "曇り"; 45, 48 -> "霧"; in 51..67, in 80..82 -> "雨"; in 71..77, 85, 86 -> "雪"; in 95..99 -> "雷雨"; else -> "天気" }
-                "$place  ·  ${current.getDouble("temperature_2m")}°C  $sky\nOpen-Meteo  ·  ${current.getString("time").replace('T', ' ')}"
-            }.getOrElse { "天気を取得できませんでした · Open-Meteo" }
+                val sky = getString(skyLabelRes(code))
+                getString(R.string.weather_summary_format, place, current.getDouble("temperature_2m").toString(), sky,
+                    current.getString("time").replace('T', ' '))
+            }.getOrElse { getString(R.string.weather_fetch_failed) }
             main.post {
                 weatherInFlight = false
                 if (!isDestroyed && settings.get("latitude").toDoubleOrNull() == lat && settings.get("longitude").toDoubleOrNull() == lon) {
@@ -200,13 +204,24 @@ class MainActivity : Activity() {
         val prop = Class.forName("android.os.SystemProperties").getMethod("get", String::class.java).invoke(null, "debug.butler.scene") as String
         WeatherScene.entries.firstOrNull { it.name == prop }
     }.getOrNull()
+    /** Mirrors the sky-text mapping used by [WeatherScene.of]. */
+    private fun skyLabelRes(code: Int): Int = when (code) {
+        0 -> R.string.weather_sky_clear
+        1, 2 -> R.string.weather_sky_partly_cloudy
+        3 -> R.string.weather_sky_cloudy
+        45, 48 -> R.string.weather_sky_fog
+        in 51..67, in 80..82 -> R.string.weather_sky_rain
+        in 71..77, 85, 86 -> R.string.weather_sky_snow
+        in 95..99 -> R.string.weather_sky_thunder
+        else -> R.string.weather_sky_default
+    }
     private fun showApproval() {
         val item = AssistantService.approval ?: return
         val id = item.optString("id")
-        AlertDialog.Builder(this).setTitle("${item.optString("name")} を実行")
+        AlertDialog.Builder(this).setTitle(getString(R.string.approval_title, item.optString("name")))
             .setMessage(item.optString("arguments").take(4000))
-            .setPositiveButton("許可") { _, _ -> if (AssistantService.approval?.optString("id") == id) action("approve") }
-            .setNegativeButton("拒否") { _, _ -> if (AssistantService.approval?.optString("id") == id) action("reject") }.show()
+            .setPositiveButton(getString(R.string.dialog_allow)) { _, _ -> if (AssistantService.approval?.optString("id") == id) action("approve") }
+            .setNegativeButton(getString(R.string.dialog_deny)) { _, _ -> if (AssistantService.approval?.optString("id") == id) action("reject") }.show()
     }
     private fun showSources() {
         val column = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(12), dp(20), dp(12)) }
@@ -224,7 +239,8 @@ class MainActivity : Activity() {
                 column.addView(text(15f).apply { text = value; movementMethod = LinkMovementMethod.getInstance() })
             }
         }
-        if (column.childCount == 0) column.addView(text(15f, "この会話には検索結果がありません"))
-        AlertDialog.Builder(this).setTitle("検索結果と出典").setView(ScrollView(this).apply { addView(column) }).setPositiveButton("閉じる", null).show()
+        if (column.childCount == 0) column.addView(text(15f, getString(R.string.sources_empty)))
+        AlertDialog.Builder(this).setTitle(getString(R.string.sources_title)).setView(ScrollView(this).apply { addView(column) })
+            .setPositiveButton(getString(R.string.dialog_close), null).show()
     }
 }

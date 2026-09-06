@@ -34,13 +34,15 @@ import java.io.File
  * Dedicated, category-based settings screen (replaces the old settings dialog). Every change is
  * saved immediately, like the Android Settings app. Entering this screen stops the assistant
  * service (so editing keys/models doesn't race a live conversation); category changes that affect
- * the service (会話/呼びかけ/連携) restart or stop it right away, matching the old dialog's save
- * behavior. Settings.dirty flags MainActivity to rebuild its home screen for background/weather
- * changes when the user returns.
+ * the service (conversation/wake/integrations) restart or stop it right away, matching the old
+ * dialog's save behavior. Settings.dirty flags MainActivity to rebuild its home screen for
+ * background/weather changes when the user returns.
  */
 class SettingsActivity : Activity() {
     private lateinit var settings: Settings
-    private val categories = listOf("会話", "呼びかけ", "天気と背景", "連携", "情報")
+    private val categories = listOf(
+        R.string.settings_category_conversation, R.string.settings_category_wake,
+        R.string.settings_category_weather_background, R.string.settings_category_integration, R.string.settings_category_info)
     private var selected = 0
     private lateinit var leftPane: LinearLayout
     private lateinit var rightPane: LinearLayout
@@ -95,12 +97,12 @@ class SettingsActivity : Activity() {
         val back = ImageButton(this).apply {
             setImageResource(R.drawable.ic_arrow_back); scaleType = ImageView.ScaleType.CENTER
             background = themeDrawable(android.R.attr.selectableItemBackgroundBorderless)
-            contentDescription = "戻る"
+            contentDescription = getString(R.string.settings_back_description)
             setOnClickListener { finish() }
         }
         // Back button and title share the same 48dp height basis so their vertical centers line up exactly.
         topBar.addView(back, LinearLayout.LayoutParams(dp(48), dp(48)))
-        topBar.addView(text(20f, "設定").apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(12), 0, 0, 0) },
+        topBar.addView(text(20f, getString(R.string.settings_title)).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(12), 0, 0, 0) },
             LinearLayout.LayoutParams(0, dp(48), 1f))
         root.addView(topBar, LinearLayout.LayoutParams(-1, dp(56)))
         val divider = View(this).apply { setBackgroundColor(Color.argb(60, 255, 255, 255)) }
@@ -126,7 +128,7 @@ class SettingsActivity : Activity() {
         categories.forEachIndexed { i, name ->
             val isSelected = i == selected
             val row = TextView(this).apply {
-                text = name; textSize = 16f
+                text = getString(name); textSize = 16f
                 setTextColor(if (isSelected) accent else textColor)
                 gravity = Gravity.CENTER_VERTICAL
                 setPadding(dp(16), 0, dp(16), 0)
@@ -181,7 +183,7 @@ class SettingsActivity : Activity() {
     private fun showEditDialog(title: String, initial: String, secret: Boolean, inputType: Int, helper: String? = null, onClear: (() -> Unit)? = null, onSave: (String) -> Boolean) {
         val edit = EditText(this).apply {
             setSingleLine(true); this.inputType = inputType; setTextColor(Color.WHITE)
-            if (secret) hint = "変更する場合だけ入力（保存済みの値は表示しません）" else setText(initial)
+            if (secret) hint = getString(R.string.settings_secret_hint) else setText(initial)
         }
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL; setPadding(dp(24), dp(8), dp(24), 0)
@@ -189,13 +191,13 @@ class SettingsActivity : Activity() {
             if (helper != null) addView(text(12f, helper).apply { setTextColor(Color.argb(153, 245, 239, 227)); setPadding(0, dp(6), 0, 0) })
         }
         val builder = AlertDialog.Builder(this).setTitle(title).setView(container)
-            .setPositiveButton("保存", null).setNegativeButton("キャンセル", null)
-        if (onClear != null) builder.setNeutralButton("削除", null)
+            .setPositiveButton(getString(R.string.dialog_save), null).setNegativeButton(getString(R.string.dialog_cancel), null)
+        if (onClear != null) builder.setNeutralButton(getString(R.string.dialog_delete), null)
         val dialog = builder.create()
         dialog.setOnShowListener {
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
                 if (onSave(edit.text.toString().trim())) dialog.dismiss()
-                else Toast.makeText(this, "入力値を確認してください", Toast.LENGTH_LONG).show()
+                else Toast.makeText(this, getString(R.string.toast_check_input), Toast.LENGTH_LONG).show()
             }
             onClear?.let { clear -> dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener { clear(); dialog.dismiss() } }
         }
@@ -206,7 +208,7 @@ class SettingsActivity : Activity() {
     private fun showChoiceDialog(title: String, items: List<String>, selectedIndex: Int, onPick: (Int) -> Unit) {
         AlertDialog.Builder(this).setTitle(title)
             .setSingleChoiceItems(items.toTypedArray(), selectedIndex) { dialog, which -> onPick(which); dialog.dismiss() }
-            .setNegativeButton("キャンセル", null).show()
+            .setNegativeButton(getString(R.string.dialog_cancel), null).show()
     }
 
     private fun renderCategory(index: Int) {
@@ -221,31 +223,31 @@ class SettingsActivity : Activity() {
     }
 
     private fun renderConversation() {
-        addRow(rightPane, "OpenAI APIキー", if (settings.secret("openai").isNotBlank()) "設定済み" else "未設定") {
-            showEditDialog("OpenAI APIキー", "", secret = true, inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD,
+        addRow(rightPane, getString(R.string.settings_row_openai_key), if (settings.secret("openai").isNotBlank()) getString(R.string.settings_value_set) else getString(R.string.settings_value_not_set)) {
+            showEditDialog(getString(R.string.settings_row_openai_key), "", secret = true, inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD,
                 onClear = { settings.setSecret("openai", ""); applyServiceState(); renderCategory(selected) }) { value ->
                 if (value.isNotBlank()) { settings.setSecret("openai", value); applyServiceState() }
                 renderCategory(selected); true
             }
         }
-        addRow(rightPane, "音声モデル", settings.get("model", "gpt-realtime-2.1")) {
-            showEditDialog("音声モデル", settings.get("model", "gpt-realtime-2.1"), secret = false, inputType = InputType.TYPE_CLASS_TEXT) { value ->
+        addRow(rightPane, getString(R.string.settings_row_voice_model), settings.get("model", "gpt-realtime-2.1")) {
+            showEditDialog(getString(R.string.settings_row_voice_model), settings.get("model", "gpt-realtime-2.1"), secret = false, inputType = InputType.TYPE_CLASS_TEXT) { value ->
                 if (value.isBlank()) false else { settings.set("model", value); applyServiceState(); renderCategory(selected); true }
             }
         }
-        addRow(rightPane, "アシスタントの声", settings.voice.label) {
-            showChoiceDialog("アシスタントの声", Voice.entries.map { it.label }, Voice.entries.indexOf(settings.voice)) { which ->
+        addRow(rightPane, getString(R.string.settings_row_voice), getString(settings.voice.labelRes)) {
+            showChoiceDialog(getString(R.string.settings_row_voice), Voice.entries.map { getString(it.labelRes) }, Voice.entries.indexOf(settings.voice)) { which ->
                 settings.setVoice(Voice.entries[which]); applyServiceState(); renderCategory(selected)
             }
         }
-        addRow(rightPane, "検索モデル", settings.get("searchModel", "gpt-5.6-luna")) {
-            showEditDialog("検索モデル", settings.get("searchModel", "gpt-5.6-luna"), secret = false, inputType = InputType.TYPE_CLASS_TEXT) { value ->
+        addRow(rightPane, getString(R.string.settings_row_search_model), settings.get("searchModel", "gpt-5.6-luna")) {
+            showEditDialog(getString(R.string.settings_row_search_model), settings.get("searchModel", "gpt-5.6-luna"), secret = false, inputType = InputType.TYPE_CLASS_TEXT) { value ->
                 if (value.isBlank()) false else { settings.set("searchModel", value); applyServiceState(); renderCategory(selected); true }
             }
         }
-        addRow(rightPane, "無発話で会話を終了するまでの秒数", "${settings.get("timeout", "30")} 秒") {
-            showEditDialog("無発話で会話を終了するまでの秒数", settings.get("timeout", "30"), secret = false, inputType = InputType.TYPE_CLASS_NUMBER,
-                helper = "5〜600 の秒数") { value ->
+        addRow(rightPane, getString(R.string.settings_row_timeout), getString(R.string.settings_seconds_format, settings.get("timeout", "30"))) {
+            showEditDialog(getString(R.string.settings_row_timeout), settings.get("timeout", "30"), secret = false, inputType = InputType.TYPE_CLASS_NUMBER,
+                helper = getString(R.string.settings_helper_timeout_range)) { value ->
                 val ok = runCatching { require(value.toLong() in 5..600) }.isSuccess
                 if (!ok) false else { settings.set("timeout", value); applyServiceState(); renderCategory(selected); true }
             }
@@ -253,12 +255,12 @@ class SettingsActivity : Activity() {
     }
 
     private fun renderWake() {
-        addSwitchRow(rightPane, "呼びかけを待つ", settings.enabled) { checked -> settings.enabled = checked; applyServiceState(); renderCategory(selected) }
-        addRow(rightPane, "呼びかけの言葉", "Hey Butler", enabled = false)
-        addRow(rightPane, "検知のしきい値", settings.get("wakeThreshold", "0.25")) {
-            showEditDialog("検知のしきい値", settings.get("wakeThreshold", "0.25"), secret = false,
+        addSwitchRow(rightPane, getString(R.string.settings_row_wake_enabled), settings.enabled) { checked -> settings.enabled = checked; applyServiceState(); renderCategory(selected) }
+        addRow(rightPane, getString(R.string.settings_row_wake_phrase), "Hey Butler", enabled = false)
+        addRow(rightPane, getString(R.string.settings_row_wake_threshold), settings.get("wakeThreshold", "0.25")) {
+            showEditDialog(getString(R.string.settings_row_wake_threshold), settings.get("wakeThreshold", "0.25"), secret = false,
                 inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL,
-                helper = "0.05〜0.9。小さいほど検知しやすい") { value ->
+                helper = getString(R.string.settings_helper_wake_threshold)) { value ->
                 val ok = runCatching { require(value.toFloat() in 0.05f..0.9f) }.isSuccess
                 if (!ok) false else { settings.set("wakeThreshold", value); applyServiceState(); renderCategory(selected); true }
             }
@@ -266,62 +268,62 @@ class SettingsActivity : Activity() {
     }
 
     private fun renderWeatherBackground() {
-        addRow(rightPane, "地域名", settings.get("location").ifBlank { "未設定" }) {
-            showEditDialog("地域名", settings.get("location"), secret = false, inputType = InputType.TYPE_CLASS_TEXT) { value ->
+        addRow(rightPane, getString(R.string.settings_row_location_name), settings.get("location").ifBlank { getString(R.string.settings_value_not_set) }) {
+            showEditDialog(getString(R.string.settings_row_location_name), settings.get("location"), secret = false, inputType = InputType.TYPE_CLASS_TEXT) { value ->
                 settings.set("location", value); Settings.dirty = true; renderCategory(selected); true
             }
         }
-        addRow(rightPane, "緯度", settings.get("latitude").ifBlank { "未設定" }) {
-            showEditDialog("緯度", settings.get("latitude"), secret = false,
+        addRow(rightPane, getString(R.string.settings_row_latitude), settings.get("latitude").ifBlank { getString(R.string.settings_value_not_set) }) {
+            showEditDialog(getString(R.string.settings_row_latitude), settings.get("latitude"), secret = false,
                 inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL or InputType.TYPE_NUMBER_FLAG_SIGNED,
-                helper = "-90〜90") { value ->
+                helper = getString(R.string.settings_helper_latitude_range)) { value ->
                 val ok = value.isBlank() || runCatching { require(value.toDouble() in -90.0..90.0) }.isSuccess
                 if (!ok) false else { settings.set("latitude", value); Settings.dirty = true; renderCategory(selected); true }
             }
         }
-        addRow(rightPane, "経度", settings.get("longitude").ifBlank { "未設定" }) {
-            showEditDialog("経度", settings.get("longitude"), secret = false,
+        addRow(rightPane, getString(R.string.settings_row_longitude), settings.get("longitude").ifBlank { getString(R.string.settings_value_not_set) }) {
+            showEditDialog(getString(R.string.settings_row_longitude), settings.get("longitude"), secret = false,
                 inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL or InputType.TYPE_NUMBER_FLAG_SIGNED,
-                helper = "-180〜180") { value ->
+                helper = getString(R.string.settings_helper_longitude_range)) { value ->
                 val ok = value.isBlank() || runCatching { require(value.toDouble() in -180.0..180.0) }.isSuccess
                 if (!ok) false else { settings.set("longitude", value); Settings.dirty = true; renderCategory(selected); true }
             }
         }
-        addSwitchRow(rightPane, "天気に合わせて背景を変える", settings.weatherBackground) { checked ->
+        addSwitchRow(rightPane, getString(R.string.settings_row_weather_background), settings.weatherBackground) { checked ->
             settings.weatherBackground = checked; Settings.dirty = true; renderCategory(selected)
         }
-        addRow(rightPane, "背景画像を選ぶ", if (settings.background.exists()) "設定済み" else "標準のイラスト") { pick(21, "image/*") }
-        addRow(rightPane, "標準に戻す", "", enabled = settings.background.exists()) {
-            AlertDialog.Builder(this).setTitle("標準に戻す")
-                .setMessage("背景画像を削除して標準のイラストに戻します。よろしいですか？")
-                .setPositiveButton("削除") { _, _ ->
+        addRow(rightPane, getString(R.string.settings_row_pick_background), if (settings.background.exists()) getString(R.string.settings_value_set) else getString(R.string.settings_value_default_illustration)) { pick(21, "image/*") }
+        addRow(rightPane, getString(R.string.settings_row_reset_background), "", enabled = settings.background.exists()) {
+            AlertDialog.Builder(this).setTitle(getString(R.string.settings_row_reset_background))
+                .setMessage(getString(R.string.settings_reset_background_message))
+                .setPositiveButton(getString(R.string.dialog_delete)) { _, _ ->
                     settings.background.delete(); Settings.dirty = true; renderCategory(selected)
-                    Toast.makeText(this, "標準の背景に戻しました", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, getString(R.string.toast_background_reset), Toast.LENGTH_SHORT).show()
                 }
-                .setNegativeButton("キャンセル", null).show()
+                .setNegativeButton(getString(R.string.dialog_cancel), null).show()
         }
     }
 
     private fun renderIntegration() {
-        addRow(rightPane, "Home Assistant URL", settings.get("haUrl").ifBlank { "未設定" }) {
-            showEditDialog("Home Assistant URL", settings.get("haUrl"), secret = false,
+        addRow(rightPane, getString(R.string.settings_row_ha_url), settings.get("haUrl").ifBlank { getString(R.string.settings_value_not_set) }) {
+            showEditDialog(getString(R.string.settings_row_ha_url), settings.get("haUrl"), secret = false,
                 inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI,
-                helper = "同一LAN内。ホスト名より IP 直指定が安定します") { value ->
+                helper = getString(R.string.settings_helper_ha_url)) { value ->
                 val trimmed = value.trimEnd('/')
                 val ok = trimmed.isBlank() || trimmed.startsWith("http://") || trimmed.startsWith("https://")
                 if (!ok) false else { settings.set("haUrl", trimmed); applyServiceState(); renderCategory(selected); true }
             }
         }
-        addRow(rightPane, "Home Assistant アクセストークン", if (settings.secret("haToken").isNotBlank()) "設定済み" else "未設定") {
-            showEditDialog("Home Assistant アクセストークン", "", secret = true, inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD,
+        addRow(rightPane, getString(R.string.settings_row_ha_token), if (settings.secret("haToken").isNotBlank()) getString(R.string.settings_value_set) else getString(R.string.settings_value_not_set)) {
+            showEditDialog(getString(R.string.settings_row_ha_token), "", secret = true, inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD,
                 onClear = { settings.setSecret("haToken", ""); applyServiceState(); renderCategory(selected) }) { value ->
                 if (value.isNotBlank()) { settings.setSecret("haToken", value); applyServiceState() }
                 renderCategory(selected); true
             }
         }
-        addRow(rightPane, "Home Assistant 接続を確認", "") {
+        addRow(rightPane, getString(R.string.settings_row_ha_check), "") {
             val url = settings.get("haUrl"); val token = settings.secret("haToken")
-            if (url.isBlank() || token.isBlank()) { Toast.makeText(this, "URLとトークンを設定してください", Toast.LENGTH_LONG).show() }
+            if (url.isBlank() || token.isBlank()) { Toast.makeText(this, getString(R.string.toast_set_url_and_token), Toast.LENGTH_LONG).show() }
             else Thread {
                 val message = runCatching {
                     val http = okhttp3.OkHttpClient.Builder()
@@ -332,19 +334,19 @@ class SettingsActivity : Activity() {
                     }
                 }
                 runOnUiThread {
-                    Toast.makeText(this, message.fold({ "接続できました（$it）" }, { "接続できません: ${it.message}" }), Toast.LENGTH_LONG).show()
+                    Toast.makeText(this, message.fold({ getString(R.string.toast_ha_connected, it) }, { getString(R.string.toast_ha_connect_failed, it.message) }), Toast.LENGTH_LONG).show()
                 }
             }.start()
         }
-        addRow(rightPane, "MCP サーバー URL", settings.get("mcpUrl").ifBlank { "未設定" }) {
-            showEditDialog("MCP サーバー URL", settings.get("mcpUrl"), secret = false, inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI,
-                helper = "公開 HTTPS URL") { value ->
+        addRow(rightPane, getString(R.string.settings_row_mcp_url), settings.get("mcpUrl").ifBlank { getString(R.string.settings_value_not_set) }) {
+            showEditDialog(getString(R.string.settings_row_mcp_url), settings.get("mcpUrl"), secret = false, inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI,
+                helper = getString(R.string.settings_helper_mcp_url)) { value ->
                 val ok = value.isBlank() || (Uri.parse(value).scheme == "https" && !Uri.parse(value).host.isNullOrBlank())
                 if (!ok) false else { settings.set("mcpUrl", value); applyServiceState(); renderCategory(selected); true }
             }
         }
-        addRow(rightPane, "MCP Bearer token", if (settings.secret("mcpToken").isNotBlank()) "設定済み" else "未設定") {
-            showEditDialog("MCP Bearer token", "", secret = true, inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD,
+        addRow(rightPane, getString(R.string.settings_row_mcp_token), if (settings.secret("mcpToken").isNotBlank()) getString(R.string.settings_value_set) else getString(R.string.settings_value_not_set)) {
+            showEditDialog(getString(R.string.settings_row_mcp_token), "", secret = true, inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD,
                 onClear = { settings.setSecret("mcpToken", ""); applyServiceState(); renderCategory(selected) }) { value ->
                 if (value.isNotBlank()) { settings.setSecret("mcpToken", value); applyServiceState() }
                 renderCategory(selected); true
@@ -355,11 +357,12 @@ class SettingsActivity : Activity() {
     private fun renderInfo() {
         val info = runCatching { packageManager.getPackageInfo(packageName, 0) }.getOrNull()
         val label = runCatching { packageManager.getApplicationLabel(applicationInfo).toString() }.getOrDefault("Butler")
-        addRow(rightPane, "アプリ名とバージョン", "$label ・ ${info?.versionName ?: "?"} (${info?.longVersionCode ?: "?"})", enabled = false)
-        addRow(rightPane, "配布物と出典", "") {
-            AlertDialog.Builder(this).setTitle("配布物と出典").setMessage(
-                "sherpa-onnx（Apache-2.0）\nONNX Runtime（MIT）\nWebRTC\nOkHttp\nOpen-Meteo"
-            ).setPositiveButton("閉じる", null).show()
+        addRow(rightPane, getString(R.string.settings_row_app_info),
+            getString(R.string.settings_app_info_format, label, info?.versionName ?: "?", (info?.longVersionCode ?: "?").toString()), enabled = false)
+        addRow(rightPane, getString(R.string.settings_row_licenses), "") {
+            AlertDialog.Builder(this).setTitle(getString(R.string.settings_row_licenses)).setMessage(
+                getString(R.string.settings_licenses_body)
+            ).setPositiveButton(getString(R.string.dialog_close), null).show()
         }
     }
 
@@ -383,7 +386,7 @@ class SettingsActivity : Activity() {
             check(temp.renameTo(dest))
             Settings.dirty = true
             renderCategory(selected)
-            Toast.makeText(this, "背景画像を変更しました", Toast.LENGTH_SHORT).show()
-        } catch (_: Exception) { Toast.makeText(this, "ファイルを読み込めませんでした（上限20MB）", Toast.LENGTH_LONG).show() }
+            Toast.makeText(this, getString(R.string.toast_background_changed), Toast.LENGTH_SHORT).show()
+        } catch (_: Exception) { Toast.makeText(this, getString(R.string.toast_file_read_failed), Toast.LENGTH_LONG).show() }
     }
 }
