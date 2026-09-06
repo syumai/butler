@@ -24,6 +24,9 @@ class Settings(context: Context) {
     var enabled: Boolean
         get() = prefs.getBoolean("enabled", false)
         set(value) { prefs.edit().putBoolean("enabled", value).apply() }
+    var weatherBackground: Boolean
+        get() = prefs.getBoolean("weatherBackground", false)
+        set(value) { prefs.edit().putBoolean("weatherBackground", value).apply() }
     val wakePhrase get() = WakePhrase.entries.firstOrNull { it.name == get("wakePhrase") } ?: WakePhrase.HELLO_COMPUTER
     val timeoutSeconds get() = get("timeout", "30").toLongOrNull()?.coerceIn(5, 600) ?: 30L
     private fun key(): SecretKey {
