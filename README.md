@@ -7,7 +7,7 @@ A native Android app under development. It bundles a wake word model and only re
 ## Confirmed requirements
 
 - Runs standalone as an Android app with no dedicated backend required; it connects to external services such as OpenAI, weather, and MCP.
-- The wake word is configurable and selectable from `Hello Computer` (default), `Hey Butler`, `Hello Butler`, and `Hello World`. English pronunciation is assumed. The app name is Butler, and the conversation language is Japanese.
+- The wake word is currently fixed to `Hey Butler` (selection UI removed for now). English pronunciation is assumed. The app name is Butler, and the conversation language is Japanese. The other phrase files (`Hello Computer`, `Hello Butler`, `Hello World`) remain bundled and are still exercised by the on-device instrumentation tests.
 - Wake word detection is on-device only. sherpa-onnx, which requires no registration, processes the standby audio locally on the device with no fallback to cloud detection. Audio is sent to OpenAI only after detection or after a manual conversation start.
 - Supports natural two-way voice conversation, including interruption by the user's speech while a response is playing.
 - The wake state is maintained while a conversation continues. The silence timeout before ending is configurable.
@@ -30,16 +30,17 @@ The build uses JDK 17 or 21, and Android SDK 35 / Build Tools 35.0.0. In this wo
 1. Set the Android SDK location in `sdk.dir` in `local.properties`.
 2. Build with `./gradlew assembleDebug testDebugUnitTest`. The sherpa-onnx AAR and the wake word model are not tracked in Git; on the first build, `./gradlew` automatically runs `scripts/fetch-deps.sh`, which fetches and verifies them from GitHub Releases (network access is required only for the first run). You can also run `scripts/fetch-deps.sh` manually.
 3. Install onto the device with `adb -s SERIAL install -r app/build/outputs/apk/debug/app-debug.apk`.
-4. Enter the OpenAI API key in Settings. Do not write the key into source code or this README.
-5. Turn on "Listen for selected wake phrase," save, and grant microphone permission.
-6. Say the selected phrase (default is "Hello Computer") and, after "Please speak" is shown, talk in Japanese.
+4. Enter the OpenAI API key in the dedicated Settings screen. Do not write the key into source code or this README.
+5. Turn on "呼びかけを待つ" (listen for the wake phrase) and grant microphone permission.
+6. Say "Hey Butler" and, after "Please speak" is shown, talk in Japanese.
 
 Wake word detection is entirely self-contained via the bundled sherpa-onnx model — no account, AccessKey, or runtime download is required. No Realtime connection is created while on standby, and the recording used for detection is never reused for or sent to the conversation session. WebRTC starts only after the on-device detector has released the microphone. Wake phrase detection itself works even without an OpenAI API key configured; a setup prompt is shown after detection in that case.
 
 ## Current features and limitations
 
 - Kotlin / native Views. Original landscape illustration background, clock, and support for importing an arbitrary image.
-- Wake phrase detection via sherpa-onnx 1.12.14 + the GigaSpeech 3.3M KWS model. The phrase and threshold are configurable. A short synthesized chime plays immediately on wake detection, before the conversation connects.
+- A dedicated, category-based settings screen (`SettingsActivity`), styled like the Android Settings app, replacing the previous settings dialog. Categories: 会話 (conversation: API key, models, silence timeout), 呼びかけ (wake: standby toggle, wake phrase display, detection threshold), 天気と背景 (weather and background), 連携 (MCP integration), and 情報 (app info and third-party notices). Every change is saved immediately, as in Android's own Settings app.
+- Wake phrase detection via sherpa-onnx 1.12.14 + the GigaSpeech 3.3M KWS model. The phrase is currently fixed to "Hey Butler" (selection UI removed for now); the detection threshold remains configurable. A short synthesized chime plays immediately on wake detection, before the conversation connects.
 - WebRTC voice conversation, Japanese instructions, semantic VAD, interruption support, and a configurable silence timeout.
 - Web search via the Responses API with clickable citations. In-app history is discarded when a conversation ends, and searches specify `store: false`.
 - Weather display via Open-Meteo. The region name and latitude/longitude are configurable. A place-name search UI and a persistent weather cache are not yet implemented.
