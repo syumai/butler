@@ -13,6 +13,7 @@ class AssistantService : Service() {
         var transcript = ""; private set
         var citations = ""; private set
         var approval: JSONObject? = null; private set
+        var conversing = false; private set
         const val START = "start"; const val TALK = "talk"; const val END = "end"; const val STOP = "stop"
     }
     private val main = Handler(Looper.getMainLooper())
@@ -112,6 +113,7 @@ class AssistantService : Service() {
             preparing = true
             stopWake {
             preparing = false
+            conversing = true
             generation++; transcript = ""; citations = ""; approval = null
             ready = false; speaking = false; responding = false; playing = false; pending = 0; calls = 0
             followup = false; handled.clear(); mcpPending.clear(); startedAt = SystemClock.elapsedRealtime(); busySince = 0
@@ -214,12 +216,12 @@ class AssistantService : Service() {
         }
     }
     private fun finish(message: String? = null) {
-        generation++; preparing = false; tools.cancel(); realtime?.close(); realtime = null
+        generation++; preparing = false; conversing = false; tools.cancel(); realtime?.close(); realtime = null
         transcript = ""; citations = ""; approval = null
         waitForWake(message)
     }
     override fun onDestroy() {
-        destroyed = true; preparing = false; generation++; main.removeCallbacksAndMessages(null); tools.cancel(); realtime?.close(); realtime = null
+        destroyed = true; preparing = false; conversing = false; generation++; main.removeCallbacksAndMessages(null); tools.cancel(); realtime?.close(); realtime = null
         wakeGeneration++
         val oldWake = wake; wake = null
         val releaseModel = { kotlin.concurrent.thread(name = "Butler-release-model") { wakeModels.close() }; Unit }

@@ -30,6 +30,8 @@ class MainActivity : Activity() {
     private lateinit var weather: TextView
     private lateinit var status: TextView
     private lateinit var transcript: TextView
+    private lateinit var talk: Button
+    private lateinit var end: Button
     private lateinit var approve: Button
     private var weatherAt = 0L
     private var weatherInFlight = false
@@ -44,6 +46,7 @@ class MainActivity : Activity() {
             status.updateText(AssistantService.status)
             transcript.updateText(AssistantService.transcript)
             approve.visibility = if (AssistantService.approval != null) View.VISIBLE else View.GONE
+            end.visibility = if (AssistantService.conversing) View.VISIBLE else View.GONE
             if (SystemClock.elapsedRealtime() - weatherAt > 900_000 || weatherAt == 0L) refreshWeather()
             main.postDelayed(this, 250)
         }
@@ -95,11 +98,18 @@ class MainActivity : Activity() {
         transcript = text(15f).apply { maxLines = 2; setPadding(0, dp(8), 0, 0) }
         column.addView(transcript, LinearLayout.LayoutParams(-1, 0, 1f))
         status = text(12f); column.addView(status)
-        val controls = LinearLayout(this)
-        controls.addView(button("話しかける") { action(AssistantService.TALK) })
-        controls.addView(button("会話終了") { action(AssistantService.END) })
-        controls.addView(button("出典") { showSources() })
-        approve = button("実行を確認") { showApproval() }; approve.visibility = View.GONE; controls.addView(approve)
+        val controls = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(8), 0, 0) }
+        talk = Button(this).apply {
+            text = "話しかける"; isAllCaps = false; textSize = 22f; setTypeface(typeface, Typeface.BOLD); setTextColor(Color.WHITE)
+            backgroundTintList = android.content.res.ColorStateList.valueOf(Color.argb(230, 46, 110, 118))
+            setOnClickListener { action(AssistantService.TALK) }
+        }
+        controls.addView(talk, LinearLayout.LayoutParams(0, dp(64), 1f))
+        end = button("会話終了") { action(AssistantService.END) }.apply { textSize = 16f; visibility = View.GONE }
+        controls.addView(end, LinearLayout.LayoutParams(dp(120), dp(64)).apply { marginStart = dp(8) })
+        controls.addView(button("出典") { showSources() }, LinearLayout.LayoutParams(-2, -2).apply { marginStart = dp(8) })
+        approve = button("実行を確認") { showApproval() }; approve.visibility = View.GONE
+        controls.addView(approve, LinearLayout.LayoutParams(-2, -2).apply { marginStart = dp(8) })
         column.addView(controls)
         setContentView(root)
     }
