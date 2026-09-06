@@ -110,7 +110,7 @@
     <string name="settings_row_app_info">App name and version</string>
     <string name="settings_app_info_format">%1$s · %2$s (%3$s)</string>
     <string name="settings_row_licenses">Third-party notices</string>
-    <string name="settings_licenses_body">sherpa-onnx (Apache-2.0)\nONNX Runtime (MIT)\nWebRTC\nOkHttp\nOpen-Meteo</string>
+    <string name="settings_licenses_body">sherpa-onnx (Apache-2.0)\nONNX Runtime (MIT)\nWebRTC\nOkHttp\nMaterial Icons (Apache-2.0)\nOpen-Meteo</string>
     <string name="toast_background_changed">Changed the background image</string>
     <string name="toast_file_read_failed">Couldn\'t read the file (max 20MB)</string>
 

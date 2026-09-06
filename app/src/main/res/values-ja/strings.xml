@@ -110,7 +110,7 @@
     <string name="settings_row_app_info">アプリ名とバージョン</string>
     <string name="settings_app_info_format">%1$s ・ %2$s (%3$s)</string>
     <string name="settings_row_licenses">配布物と出典</string>
-    <string name="settings_licenses_body">sherpa-onnx（Apache-2.0）\nONNX Runtime（MIT）\nWebRTC\nOkHttp\nOpen-Meteo</string>
+    <string name="settings_licenses_body">sherpa-onnx（Apache-2.0）\nONNX Runtime（MIT）\nWebRTC\nOkHttp\nMaterial Icons（Apache-2.0）\nOpen-Meteo</string>
     <string name="toast_background_changed">背景画像を変更しました</string>
     <string name="toast_file_read_failed">ファイルを読み込めませんでした（上限20MB）</string>
 
