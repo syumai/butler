@@ -29,27 +29,19 @@ class AssistantService : Service() {
     private lateinit var registry: ToolRegistry
     private var generation = 0
     private var wakeGeneration = 0
-    private var ready = false
-    private var speaking = false
-    private var responding = false
-    private var playing = false
-    private var pending = 0
-    private var calls = 0
-    private var followup = false
-    private var ending = false
+    private var state = ConversationState()
     private var startedAt = 0L
     private var busySince = 0L
     private var idle = IdlePolicy(30_000)
     private val handled = mutableSetOf<String>()
-    private val mcpPending = mutableSetOf<String>()
     private val ticker = object : Runnable {
         override fun run() {
             if (realtime != null) {
                 val now = SystemClock.elapsedRealtime()
-                val busy = !ready || speaking || responding || playing || pending > 0 || mcpPending.isNotEmpty() || approval != null
+                val busy = state.busy
                 idle.update(now, busy)
                 if (busy) { if (busySince == 0L) busySince = now } else busySince = 0
-                if ((!ready && now - startedAt > 30_000) || (busySince > 0 && now - busySince > 120_000)) finish("接続・応答がタイムアウトしました")
+                if ((!state.ready && now - startedAt > 30_000) || (busySince > 0 && now - busySince > 120_000)) finish("接続・応答がタイムアウトしました")
                 else if (idle.expired(now)) finish()
             }
             main.postDelayed(this, 250)
@@ -77,7 +69,7 @@ class AssistantService : Service() {
                     realtime?.send(JSONObject().put("type", "conversation.item.create").put("item", JSONObject()
                         .put("type", "mcp_approval_response").put("approval_request_id", it.getString("id"))
                         .put("approve", intent.action == "approve")))
-                    approval = null; status = "ツールを処理中"; maybeFollowup()
+                    approval = null; state.approvalPending = false; status = "ツールを処理中"; maybeFollowup()
                 }
             }
             else -> { if (realtime == null && wake == null && !preparing) waitForWake() }
@@ -117,8 +109,8 @@ class AssistantService : Service() {
             preparing = false
             conversing = true
             generation++; transcript = ""; citations = ""; approval = null
-            ready = false; speaking = false; responding = false; playing = false; pending = 0; calls = 0
-            followup = false; ending = false; handled.clear(); mcpPending.clear(); startedAt = SystemClock.elapsedRealtime(); busySince = 0
+            state = ConversationState()
+            handled.clear(); startedAt = SystemClock.elapsedRealtime(); busySince = 0
             idle = IdlePolicy(settings.timeoutSeconds * 1000); client = ToolClient(); registry = ToolRegistry(settings, client)
             status = "接続中…"
             val id = generation
@@ -133,34 +125,33 @@ class AssistantService : Service() {
     private fun onEvent(e: JSONObject) {
         when (e.optString("type")) {
             "session.created" -> realtime?.send(JSONObject().put("type", "session.update").put("session", JSONObject().put("type", "realtime").put("tools", registry.definitions())))
-            "session.updated" -> { if (!ready) { ready = true; realtime?.enableMicrophone(); status = "お話しください" } }
-            "input_audio_buffer.speech_started" -> { if (!ending) { speaking = true; status = "聞いています"; idle.update(SystemClock.elapsedRealtime(), true) } }
-            "input_audio_buffer.speech_stopped" -> speaking = false
-            "response.created" -> { idle.update(SystemClock.elapsedRealtime(), true); responding = true; transcript = ""; status = "応答中" }
-            "output_audio_buffer.started" -> playing = true
+            "session.updated" -> if (state.sessionReady()) { realtime?.enableMicrophone(); status = "お話しください" }
+            "input_audio_buffer.speech_started" -> if (state.speechStarted()) { status = "聞いています"; idle.update(SystemClock.elapsedRealtime(), true) }
+            "input_audio_buffer.speech_stopped" -> state.speechStopped()
+            "response.created" -> { idle.update(SystemClock.elapsedRealtime(), true); state.responseCreated(); transcript = ""; status = "応答中" }
+            "output_audio_buffer.started" -> state.audioStarted()
             "output_audio_buffer.stopped", "output_audio_buffer.cleared" -> {
-                playing = false
-                if (ending && !responding) { finish(); return }
-                if (!responding) status = "お話しください"
+                if (state.audioStopped()) { finish(); return }
+                if (!state.responding) status = "お話しください"
             }
             "response.output_audio_transcript.delta" -> transcript = (transcript + e.optString("delta")).takeLast(4000)
             "response.function_call_arguments.done" -> {
                 val callId = e.getString("call_id")
                 if (!handled.add(callId)) return
-                if (++calls > 10) { finish("ツール呼び出しの上限に達しました"); return }
+                if (!state.callStarted()) { finish("ツール呼び出しの上限に達しました"); return }
                 if (e.optString("name") == "end_conversation") {
-                    ending = true; status = "会話を終了します"
+                    state.endRequested(); status = "会話を終了します"
                     realtime?.disableMicrophone()
                     realtime?.send(JSONObject().put("type", "conversation.item.create").put("item", JSONObject()
                         .put("type", "function_call_output").put("call_id", callId).put("output", "{\"ok\":true}")))
-                    followup = true; maybeFollowup()
+                    maybeFollowup()
                     val id = generation
-                    main.postDelayed({ if (generation == id && ending) finish() }, 20_000)
+                    main.postDelayed({ if (generation == id && state.ending) finish() }, 20_000)
                     return
                 }
                 val name = e.optString("name")
                 val tool = registry.find(name)
-                pending++; followup = true; status = tool?.busyStatus ?: "検索中…"
+                state.toolCallStarted(); status = tool?.busyStatus ?: "検索中…"
                 val id = generation
                 worker.execute {
                     val result = runCatching {
@@ -172,43 +163,42 @@ class AssistantService : Service() {
                         citations = result.optJSONArray("content")?.toString() ?: ""
                         realtime?.send(JSONObject().put("type", "conversation.item.create").put("item", JSONObject()
                             .put("type", "function_call_output").put("call_id", callId).put("output", result.toString())))
-                        pending--; maybeFollowup()
+                        state.toolCallFinished(); maybeFollowup()
                     }
                 }
             }
             "conversation.item.done" -> {
                 val item = e.optJSONObject("item") ?: return
-                if (item.optString("type") == "mcp_approval_request") { approval = item; status = "画面でツール実行を確認してください" }
+                if (item.optString("type") == "mcp_approval_request") { approval = item; state.approvalPending = true; status = "画面でツール実行を確認してください" }
             }
             "response.mcp_call_arguments.done", "response.mcp_call.in_progress" -> {
-                if (mcpPending.add(e.optString("item_id")) && ++calls > 10) { finish("ツール呼び出しの上限に達しました"); return }
-                followup = true
+                if (!state.mcpCallStarted(e.optString("item_id"))) { finish("ツール呼び出しの上限に達しました"); return }
             }
             "response.output_item.done" -> {
                 val item = e.optJSONObject("item") ?: return
-                if (item.optString("type") == "mcp_call") { mcpPending.remove(item.optString("id")); followup = true; maybeFollowup() }
+                if (item.optString("type") == "mcp_call") { state.mcpCallFinished(item.optString("id")); maybeFollowup() }
             }
-            "response.mcp_call.failed" -> { mcpPending.remove(e.optString("item_id")); maybeFollowup() }
+            "response.mcp_call.failed" -> { state.mcpCallFailed(e.optString("item_id")); maybeFollowup() }
             "mcp_list_tools.failed" -> status = "MCPに接続できませんでした"
             "response.done" -> {
-                responding = false
                 val response = e.optJSONObject("response")
-                if (response?.optString("status") in listOf("failed", "incomplete")) {
+                val failed = response?.optString("status") in listOf("failed", "incomplete")
+                if (failed) {
                     val code = response?.optJSONObject("status_details")?.optJSONObject("error")?.optString("code").orEmpty()
                     android.util.Log.w("Butler", "Response failed: ${code.take(80)}")
                     status = "音声応答に失敗しました。もう一度話しかけてください"
-                    if (ending) finish()
-                    return
                 }
-                maybeFollowup()
-                if (ending && !responding && !playing) finish()
-                else if (!playing && pending == 0 && approval == null) status = "お話しください" }
+                val outcome = state.responseDone(failed)
+                if (outcome.followup) realtime?.send(JSONObject().put("type", "response.create"))
+                if (outcome.finish) finish()
+                else if (!failed && !state.playing && state.pending == 0 && !state.approvalPending) status = "お話しください"
+            }
             "error" -> {
                 val code = e.optJSONObject("error")?.optString("code").orEmpty()
                 when (code) {
                     // VAD can start a reply while a tool follow-up request is in flight.
                     // Keep the active response and its audio connection alive.
-                    "conversation_already_has_active_response" -> responding = true
+                    "conversation_already_has_active_response" -> state.markResponding()
                     "response_cancel_not_active" -> Unit
                     else -> finish("APIエラー。キー・モデル・MCP設定を確認してください")
                 }
@@ -216,12 +206,10 @@ class AssistantService : Service() {
         }
     }
     private fun maybeFollowup() {
-        if (followup && !responding && pending == 0 && mcpPending.isEmpty() && approval == null) {
-            followup = false; responding = true; realtime?.send(JSONObject().put("type", "response.create"))
-        }
+        if (state.tryFollowup()) realtime?.send(JSONObject().put("type", "response.create"))
     }
     private fun finish(message: String? = null) {
-        generation++; preparing = false; conversing = false; ending = false; client.cancel(); realtime?.close(); realtime = null
+        generation++; preparing = false; conversing = false; client.cancel(); realtime?.close(); realtime = null
         transcript = ""; citations = ""; approval = null
         waitForWake(message)
     }
