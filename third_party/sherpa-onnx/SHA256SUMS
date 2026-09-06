@@ -2,8 +2,8 @@
 f61ebd3eed3773a44d088d53dfae92dbb6aec4839f4dcaee2d402414741663a3  app/src/main/assets/wake/decoder.onnx
 1e721676515bcd42a186979733981213c66c80db680e1cc582dfedf3be76e678  app/src/main/assets/wake/encoder.onnx
 a53bf27b7df27f58f3bb2743eb46ea9e916a968c182b5f229fc418b747f809cf  app/src/main/assets/wake/hello-butler.txt
-8903f27dd19aad08b1efb2e91da9e7ac12a86f8f614ecc312a0368d5569481f6  app/src/main/assets/wake/hello-computer.txt
-228d1635d36d499a0ed8b20f55c0d26a879a2d439be5e7ba3ff24d05dfdb3414  app/src/main/assets/wake/hey-butler.txt
+fb4fdad351e7cbe36629aea6ce939f5836fbc8135a898fc8f2affb5f4539a264  app/src/main/assets/wake/hello-computer.txt
+51396d0154ec49c4238c57bbf5d1359fe36a52a2b6911ee17170fc73cc645751  app/src/main/assets/wake/hey-butler.txt
 eae9da0c7e1e6c6a3f4cc42d167899c388f6c6701b94cb96320e4f55df79624c  app/src/main/assets/wake/joiner.onnx
 d738132b90686a1addd3ebdb6a39a7859a41512f1193c724615dadd5004ccb39  app/src/main/assets/wake/keywords.txt
 fd2ded4050a55d2b1578870ba8697d02371980217806b7558bd0a5cc60f3ba53  app/src/main/assets/wake/tokens.txt

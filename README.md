@@ -62,6 +62,6 @@ adb -s SERIAL install -r app/build/outputs/apk/androidTest/debug/app-debug-andro
 adb -s SERIAL shell am instrument -w dev.syumai.butler.test/dev.syumai.butler.WakeInstrumentation
 ```
 
-`PASS` indicates success. This runner is not a normal JUnit runner; it runs via `am instrument`. It feeds the actual bundled model 16kHz PCM audio for the wake phrase, other sentences, and silence. The fixtures are synthetic TTS audio, and this does not substitute for validating pronunciation accuracy with a microphone, at a distance, or with Japanese speakers.
+`PASS` indicates success. `-e mode record -e seconds N` records N seconds of real microphone audio to the app's external files directory for offline analysis of how the model hears a speaker (used to tune the phrase files for Japanese pronunciation). This runner is not a normal JUnit runner; it runs via `am instrument`. It feeds the actual bundled model 16kHz PCM audio for the wake phrase, other sentences, and silence. The fixtures are synthetic TTS audio, and this does not substitute for validating pronunciation accuracy with a microphone, at a distance, or with Japanese speakers.
 
 The provenance, license, and hashes of the distributed artifacts are documented in [third_party/sherpa-onnx](third_party/sherpa-onnx/README.md). The AAR and onnx model are not included in Git; `scripts/fetch-deps.sh` fetches and verifies them.
