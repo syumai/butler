@@ -66,6 +66,8 @@ Configurable items:
 
 Settings and the weather cache may be persisted, but recordings and conversation history are not saved. Not saving in-app history is a separate matter from the API provider's own data retention.
 
+Settings live in a dedicated `SettingsActivity` (started from the home screen's 設定 button) rather than a dialog, laid out as a two-pane, Android-Settings-style screen sized for the landscape 480px-tall device: a fixed-width category list on the left and a scrollable row list on the right. Categories: 会話 (OpenAI API key, voice/search model, silence timeout), 呼びかけ (standby toggle, the fixed wake phrase display, detection threshold), 天気と背景 (region, latitude/longitude, weather-linked background toggle, background image picker/reset), 連携 (MCP server URL and bearer token), and 情報 (app name/version, third-party notices). Every row change is saved immediately (no global save button); text/number rows open a compact single-EditText dialog, switches toggle inline. Entering the screen stops the assistant service, and a change in a category that affects it (会話/呼びかけ/連携) restarts or stops it right away — the same start-if-enabled/stop-otherwise behavior the old dialog applied on save. Background/weather changes set an in-memory `Settings.dirty` flag that `MainActivity` checks in `onResume` to rebuild the home screen.
+
 ## Implementation order
 
 1. Verify device ABI, audio path, permissions, and continuous recording on the device.

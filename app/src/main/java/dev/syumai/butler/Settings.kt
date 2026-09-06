@@ -12,6 +12,12 @@ import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
 class Settings(context: Context) {
+    companion object {
+        // Set by SettingsActivity after a change that MainActivity's home screen needs to reflect
+        // (background image, weather region, weather-linked background toggle). In-memory only,
+        // process-lifetime; MainActivity clears it after rebuilding the home screen in onResume.
+        @Volatile var dirty = false
+    }
     private val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
     init {
         // Remove obsolete provider credentials and model after migration.
