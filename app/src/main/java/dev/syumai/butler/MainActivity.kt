@@ -67,6 +67,8 @@ class MainActivity : Activity() {
     }
     override fun onResume() {
         super.onResume(); visible = true; main.removeCallbacks(tick); main.post(tick)
+        // Rebuild the home screen if SettingsActivity changed something it reflects (background, weather region/toggle).
+        if (Settings.dirty) { Settings.dirty = false; weatherAt = 0; home() }
         if (settings.enabled && checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) action(AssistantService.START)
     }
     override fun onPause() { visible = false; main.removeCallbacks(tick); super.onPause() }
@@ -89,7 +91,7 @@ class MainActivity : Activity() {
         root.addView(column, FrameLayout.LayoutParams(-1, -1))
         val header = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
         header.addView(text(12f, "B U T L E R"), LinearLayout.LayoutParams(0, -2, 1f))
-        header.addView(button("設定") { showSettings() }, LinearLayout.LayoutParams(dp(72), dp(42)))
+        header.addView(button("設定") { startActivity(Intent(this, SettingsActivity::class.java)) }, LinearLayout.LayoutParams(dp(72), dp(42)))
         column.addView(header)
         clock = text(88f).apply { typeface = Typeface.create("sans-serif-thin", Typeface.NORMAL); includeFontPadding = false }
         column.addView(clock)
@@ -127,92 +129,6 @@ class MainActivity : Activity() {
         super.onRequestPermissionsResult(code, permissions, results)
         if (code == 10 && results.firstOrNull() == PackageManager.PERMISSION_GRANTED) action(pendingAction)
         else Toast.makeText(this, "マイク権限が必要です。設定から再開できます。", Toast.LENGTH_LONG).show()
-    }
-    private fun showSettings() {
-        // Stop input while editing keys or replacing the model; resume only after saving.
-        stopService(Intent(this, AssistantService::class.java))
-        val form = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(10), dp(20), dp(10)) }
-        val fields = mutableMapOf<String, EditText>()
-        fun field(key: String, label: String, fallback: String = "", secret: Boolean = false) {
-            form.addView(text(13f, label))
-            val edit = EditText(this).apply {
-                setSingleLine(true); setTextColor(Color.WHITE)
-                inputType = if (secret) 129 else 1
-                setText(if (secret) "" else settings.get(key, fallback))
-                if (secret) hint = "変更する場合だけ入力（保存済みの値は表示しません）"
-            }; fields[key] = edit; form.addView(edit)
-        }
-        field("openai", "OpenAI APIキー", secret = true)
-        field("model", "音声モデル", "gpt-realtime-2.1")
-        field("searchModel", "検索モデル", "gpt-4.1-mini")
-        field("timeout", "会話終了までの無発話秒数（5〜600）", "30")
-        form.addView(text(13f, "呼びかけ（Wake word）"))
-        val phrase = Spinner(this).apply {
-            adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, WakePhrase.entries.map { it.label })
-            setSelection(settings.wakePhrase.ordinal)
-        }
-        form.addView(phrase)
-        field("wakeThreshold", "呼びかけ検知のしきい値（0.05〜0.9、小さいほど検知しやすい）", "0.25")
-        field("location", "天気の地域名（表示用）")
-        field("latitude", "緯度（-90〜90）")
-        field("longitude", "経度（-180〜180）")
-        field("mcpUrl", "公開MCPサーバーURL（任意・HTTPS）")
-        field("mcpToken", "MCP Bearer token（必要な場合）", secret = true)
-        val enabled = Switch(this).apply { text = "選択した呼びかけを待つ"; isChecked = settings.enabled }; form.addView(enabled)
-        val weatherBg = Switch(this).apply { text = "天気に合わせて背景を変える"; isChecked = settings.weatherBackground }; form.addView(weatherBg)
-        form.addView(text(12f, "英語の発音で呼びかけてください。モデル同梱・登録不要・端末内検知のみ。"))
-        form.addView(button("背景画像を選ぶ") { pick(21, "image/*") })
-        form.addView(button("保存済みAPIキーとMCP認証を削除") {
-            listOf("openai", "mcpToken").forEach { settings.setSecret(it, "") }
-            Toast.makeText(this, "認証情報を削除しました", Toast.LENGTH_SHORT).show()
-        })
-        val scroll = ScrollView(this).apply { addView(form) }
-        val dialog = AlertDialog.Builder(this).setTitle("Butler 設定").setView(scroll).setPositiveButton("保存", null).setNegativeButton("閉じる", null).create()
-        dialog.setOnShowListener {
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                try {
-                    val timeout = fields.getValue("timeout").text.toString().toLong(); require(timeout in 5..600)
-                    val threshold = fields.getValue("wakeThreshold").text.toString().toFloat(); require(threshold in 0.05f..0.9f)
-                    val lat = fields.getValue("latitude").text.toString(); val lon = fields.getValue("longitude").text.toString()
-                    require((lat.isBlank() && lon.isBlank()) || (lat.toDouble() in -90.0..90.0 && lon.toDouble() in -180.0..180.0))
-                    val url = fields.getValue("mcpUrl").text.toString()
-                    require(url.isBlank() || (Uri.parse(url).scheme == "https" && !Uri.parse(url).host.isNullOrBlank()))
-                    fields.forEach { (key, edit) ->
-                        if (key in listOf("openai", "mcpToken")) { if (edit.text.isNotBlank()) settings.setSecret(key, edit.text.toString().trim()) }
-                        else settings.set(key, edit.text.toString().trim())
-                    }
-                    settings.set("wakePhrase", WakePhrase.entries[phrase.selectedItemPosition].name)
-                    settings.enabled = enabled.isChecked; settings.weatherBackground = weatherBg.isChecked
-                    weatherAt = 0; dialog.dismiss(); home()
-                    if (settings.enabled) action(AssistantService.START)
-                } catch (_: Exception) { Toast.makeText(this, "数値の範囲、緯度経度、HTTPS URLを確認してください", Toast.LENGTH_LONG).show() }
-            }
-        }
-        dialog.setOnDismissListener { if (settings.enabled && checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) action(AssistantService.START) }
-        dialog.show()
-    }
-    private fun pick(code: Int, mime: String) { startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType(mime), code) }
-    override fun onActivityResult(request: Int, result: Int, data: Intent?) {
-        super.onActivityResult(request, result, data)
-        if (request != 21 || result != RESULT_OK || data?.data == null) return
-        try {
-            stopService(Intent(this, AssistantService::class.java))
-            val dest = settings.background
-            val temp = File(filesDir, "import.tmp")
-            contentResolver.openInputStream(data.data!!)!!.use { input ->
-                temp.outputStream().use { output ->
-                    val bytes = ByteArray(8192); var total = 0
-                    while (true) { val n = input.read(bytes); if (n < 0) break; total += n; require(total <= 20_000_000); output.write(bytes, 0, n) }
-                }
-            }
-            require(temp.length() > 0)
-            if (request == 21) {
-                val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }; BitmapFactory.decodeFile(temp.path, opts)
-                require(opts.outWidth > 0 && opts.outHeight > 0)
-            }
-            check(temp.renameTo(dest)); home()
-            Toast.makeText(this, "読み込みました。設定を保存してください", Toast.LENGTH_SHORT).show()
-        } catch (_: Exception) { Toast.makeText(this, "ファイルを読み込めませんでした（上限20MB）", Toast.LENGTH_LONG).show() }
     }
     private fun refreshWeather() {
         if (weatherInFlight) return

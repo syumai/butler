@@ -12,10 +12,16 @@ import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
 class Settings(context: Context) {
+    companion object {
+        // Set by SettingsActivity after a change that MainActivity's home screen needs to reflect
+        // (background image, weather region, weather-linked background toggle). In-memory only,
+        // process-lifetime; MainActivity clears it after rebuilding the home screen in onResume.
+        @Volatile var dirty = false
+    }
     private val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
     init {
         // Remove obsolete provider credentials and model after migration.
-        prefs.edit().remove("picovoice").remove("sensitivity").apply()
+        prefs.edit().remove("picovoice").remove("sensitivity").remove("wakePhrase").apply()
         File(context.filesDir, "butler.ppn").delete()
     }
     val background = File(context.filesDir, "background.jpg")
@@ -27,7 +33,9 @@ class Settings(context: Context) {
     var weatherBackground: Boolean
         get() = prefs.getBoolean("weatherBackground", false)
         set(value) { prefs.edit().putBoolean("weatherBackground", value).apply() }
-    val wakePhrase get() = WakePhrase.entries.firstOrNull { it.name == get("wakePhrase") } ?: WakePhrase.HELLO_COMPUTER
+    // Wake phrase selection is not exposed to the user yet; fixed to Hey Butler. The enum and the other
+    // phrase assets are kept for the instrumentation tests.
+    val wakePhrase get() = WakePhrase.HEY_BUTLER
     val timeoutSeconds get() = get("timeout", "30").toLongOrNull()?.coerceIn(5, 600) ?: 30L
     private fun key(): SecretKey {
         val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
