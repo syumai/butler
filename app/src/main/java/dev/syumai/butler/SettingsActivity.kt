@@ -254,12 +254,6 @@ class SettingsActivity : Activity() {
     }
 
     private fun renderWeatherBackground() {
-        addSwitchRow(rightPane, "執事キャラクターを表示", settings.showCharacter) { checked ->
-            settings.showCharacter = checked; Settings.dirty = true
-        }
-        addSwitchRow(rightPane, "執事キャラクターを動かす", settings.animateCharacter) { checked ->
-            settings.animateCharacter = checked; Settings.dirty = true
-        }
         addRow(rightPane, "地域名", settings.get("location").ifBlank { "未設定" }) {
             showEditDialog("地域名", settings.get("location"), secret = false, inputType = InputType.TYPE_CLASS_TEXT) { value ->
                 settings.set("location", value); Settings.dirty = true; renderCategory(selected); true

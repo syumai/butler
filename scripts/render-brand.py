@@ -25,7 +25,6 @@ def vector(name, launcher=False):
     lines.append('</vector>')
     (res / f'drawable/{name}.xml').write_text('\n'.join(lines) + '\n')
 
-vector('butler_character')
 vector('ic_launcher_foreground', launcher=True)
 for qualifier, themed in [('mipmap-anydpi-v26', False), ('mipmap-anydpi-v33', True)]:
     folder = res / qualifier
@@ -39,3 +38,21 @@ for qualifier, themed in [('mipmap-anydpi-v26', False), ('mipmap-anydpi-v33', Tr
     lines.append('</adaptive-icon>')
     (folder / 'ic_launcher.xml').write_text('\n'.join(lines) + '\n')
 subprocess.run(['rsvg-convert', '-w', '1024', '-h', '1024', str(source), '-o', str(root / 'docs/assets/butler.png')], check=True)
+
+# README icon: the same foreground transform and rounded-square mask as the
+# adaptive icon preview, cropped to the visible 72dp area (transparent corners).
+android = '{http://schemas.android.com/apk/res/android}'
+foreground = ET.parse(res / 'drawable/ic_launcher_foreground.xml').getroot().find('group')
+background = ET.parse(res / 'values/colors.xml').getroot().find("color[@name='ic_launcher_background']").text
+transform = (f'translate({foreground.attrib[android + "translateX"]} {foreground.attrib[android + "translateY"]}) '
+             f'scale({foreground.attrib[android + "scaleX"]} {foreground.attrib[android + "scaleY"]})')
+icon_paths = ''.join(f'<path fill="{p.attrib[android + "fillColor"]}" d="{p.attrib[android + "pathData"]}"/>'
+                     for p in foreground.findall('path'))
+readme_svg = root / 'docs/assets/butler-icon.svg'
+readme_svg.write_text(
+    '<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="18 18 72 72">\n'
+    '  <title>Butler rounded-square icon</title>\n'
+    '  <defs><clipPath id="mask"><rect x="18" y="18" width="72" height="72" rx="16"/></clipPath></defs>\n'
+    f'  <g clip-path="url(#mask)"><rect x="18" y="18" width="72" height="72" fill="{background}"/>'
+    f'<g transform="{transform}">{icon_paths}</g></g>\n</svg>\n')
+subprocess.run(['rsvg-convert', str(readme_svg), '-o', str(root / 'docs/assets/butler-icon.png')], check=True)

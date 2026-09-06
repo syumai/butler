@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="18 18 72 72">
+  <title>Butler rounded-square icon</title>
+  <defs><clipPath id="mask"><rect x="18" y="18" width="72" height="72" rx="16"/></clipPath></defs>
+  <g clip-path="url(#mask)"><rect x="18" y="18" width="72" height="72" fill="#F3F6F4"/><g transform="translate(-10 -11) scale(0.25 0.25)"><path fill="#28585C" d="M144 208Q200 232 224 196Q244 184 256 218Q268 184 288 196Q312 232 368 208Q344 280 256 236Q168 280 144 208Z"/><path fill="#D9B36C" d="M196 276L256 312L196 348Z M316 276V348L256 312Z"/></g></g>
+</svg>
