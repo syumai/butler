@@ -135,6 +135,11 @@ class AssistantService : Service() {
             .put("parameters", JSONObject("""{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}""")))
             .put(JSONObject().put("type", "function").put("name", "end_conversation").put("description", "ユーザーが会話の終了を求めたとき、短く別れの挨拶をしてから終了する")
                 .put("parameters", JSONObject("""{"type":"object","properties":{}}""")))
+        if (settings.get("haUrl").isNotBlank() && settings.secret("haToken").isNotBlank()) {
+            defs.put(JSONObject().put("type", "function").put("name", "home_assistant")
+                .put("description", "自宅のHome Assistantで家電・照明・スイッチ・エアコンなどを操作したり、その状態を調べたりする。ユーザーの要望を日本語の短い命令文または質問文にして text に渡す（例: リビングの電気を消して / 寝室の温度は？）。鍵の解錠や高額・危険な操作はユーザーに口頭で確認してから呼ぶ。")
+                .put("parameters", JSONObject("""{"type":"object","properties":{"text":{"type":"string"}},"required":["text"]}""")))
+        }
         val url = settings.get("mcpUrl")
         if (url.isNotBlank()) {
             val mcp = JSONObject().put("type", "mcp").put("server_label", "configured_server").put("server_url", url).put("require_approval", "always")
@@ -171,14 +176,19 @@ class AssistantService : Service() {
                     main.postDelayed({ if (generation == id && ending) finish() }, 20_000)
                     return
                 }
-                pending++; followup = true; status = "検索中…"
+                val name = e.optString("name")
+                pending++; followup = true; status = if (name == "home_assistant") "家電を操作中…" else "検索中…"
                 val id = generation
                 val toolClient = tools
                 worker.execute {
                     val result = runCatching {
-                        check(e.optString("name") == "search_web")
-                        toolClient.search(settings, JSONObject(e.getString("arguments")).getString("query"))
-                    }.getOrElse { JSONObject().put("error", "検索できませんでした。結果を推測しないでください。") }
+                        val args = JSONObject(e.getString("arguments"))
+                        when (name) {
+                            "search_web" -> toolClient.search(settings, args.getString("query"))
+                            "home_assistant" -> toolClient.homeAssistant(settings, args.getString("text"))
+                            else -> error("unknown tool $name")
+                        }
+                    }.getOrElse { JSONObject().put("error", "ツールを実行できませんでした。結果を推測しないでください。") }
                     main.post {
                         if (generation != id) return@post
                         citations = result.optJSONArray("content")?.toString() ?: ""

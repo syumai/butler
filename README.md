@@ -13,6 +13,7 @@ A native Android app under development. It bundles a wake word model and only re
 - The wake state is maintained while a conversation continues. The silence timeout before ending is configurable.
 - No long-term memory by default; only the conversation context within the same session is retained.
 - Supports web-search-based answers and can be configured for MCP integration.
+- Can control home appliances (lights, switches, air conditioners, etc.) and query their state through a Home Assistant server on the home LAN.
 - The home screen is a clock over an image background, with weather shown alongside it; the target region is configurable.
 - A physical device is available and reachable via ADB.
 
@@ -36,6 +37,12 @@ The build uses JDK 17 or 21, and Android SDK 35 / Build Tools 35.0.0. In this wo
 
 Wake word detection is entirely self-contained via the bundled sherpa-onnx model — no account, AccessKey, or runtime download is required. No Realtime connection is created while on standby, and the recording used for detection is never reused for or sent to the conversation session. WebRTC starts only after the on-device detector has released the microphone. Wake phrase detection itself works even without an OpenAI API key configured; a setup prompt is shown after detection in that case.
 
+### Home Assistant setup
+
+1. In Home Assistant, expose the entities you want voice control over to Assist (Settings → Voice assistants → Expose), and create a Long-Lived Access Token from your Home Assistant user profile page.
+2. In the app's 設定 → 連携 screen, enter the Home Assistant URL (e.g. `http://192.168.1.10:8123`; a fixed IP is more reliable than `homeassistant.local` on this device) and the access token, then tap "Home Assistant 接続を確認" to verify connectivity.
+3. Once both are set, the assistant gains a tool to operate and query devices through Home Assistant's Assist conversation API. The Home Assistant server must be reachable over the home LAN; HTTPS with a self-signed certificate is not supported — use plain HTTP on the LAN, or a certificate trusted by the system (e.g. Let's Encrypt via Nabu Casa or a reverse proxy).
+
 ## Current features and limitations
 
 - Kotlin / native Views. Original landscape illustration background, clock, and support for importing an arbitrary image.
@@ -46,6 +53,7 @@ Wake word detection is entirely self-contained via the bundled sherpa-onnx model
 - Weather display via Open-Meteo. The region name and latitude/longitude are configurable. A place-name search UI and a persistent weather cache are not yet implemented.
 - Optional weather-linked home screen background ("天気に合わせて背景を変える" in Settings): when enabled, the background is replaced by a code-drawn scene matching the current outdoor weather code and day/night state (clear, partly cloudy, cloudy, fog, rain, snow, thunder), redrawn on each 15-minute weather refresh. Off by default; when off, or while the scene is unknown, the imported photo or the original illustration is shown as before.
 - One public HTTPS MCP server can be configured, with on-screen approval for each call. LAN-based MCP clients, OAuth flows, and managing multiple servers are not yet implemented.
+- Home Assistant integration is a client-side function tool that calls a LAN Home Assistant server's `/api/conversation/process` REST endpoint directly (a Long-Lived Access Token, not the MCP server integration, so nothing needs to be exposed publicly). Cleartext HTTP is allowed for this LAN traffic; HTTPS with a self-signed certificate is not supported. Unlike the MCP tool, there is no per-call on-screen approval — the model is instructed to confirm risky actions (unlocking, high-cost or dangerous operations) verbally before calling the tool.
 - The API key is encrypted with Android Keystore, and backups are disabled. This does not guarantee full key protection if the device itself is compromised.
 - Targets a specific Android 11 device (targetSdk 35, armeabi-v7a). Not configured for Play Store publication.
 - Registers as a HOME app candidate but does not automatically change the default HOME app. Recovery after reboot, long-duration standby, and real voice quality all still require on-device validation.

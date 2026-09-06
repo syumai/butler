@@ -248,6 +248,38 @@ class SettingsActivity : Activity() {
     }
 
     private fun renderIntegration() {
+        addRow(rightPane, "Home Assistant URL", settings.get("haUrl").ifBlank { "未設定" }) {
+            showEditDialog("Home Assistant URL（同一LAN内。ホスト名よりIP直指定の方がこの端末では安定します）", settings.get("haUrl"), secret = false,
+                inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI) { value ->
+                val trimmed = value.trimEnd('/')
+                val ok = trimmed.isBlank() || trimmed.startsWith("http://") || trimmed.startsWith("https://")
+                if (!ok) false else { settings.set("haUrl", trimmed); applyServiceState(); renderCategory(selected); true }
+            }
+        }
+        addRow(rightPane, "Home Assistant アクセストークン", if (settings.secret("haToken").isNotBlank()) "設定済み" else "未設定") {
+            showEditDialog("Home Assistant アクセストークン", "", secret = true, inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD,
+                onClear = { settings.setSecret("haToken", ""); applyServiceState(); renderCategory(selected) }) { value ->
+                if (value.isNotBlank()) { settings.setSecret("haToken", value); applyServiceState() }
+                renderCategory(selected); true
+            }
+        }
+        addRow(rightPane, "Home Assistant 接続を確認", "") {
+            val url = settings.get("haUrl"); val token = settings.secret("haToken")
+            if (url.isBlank() || token.isBlank()) { Toast.makeText(this, "URLとトークンを設定してください", Toast.LENGTH_LONG).show() }
+            else Thread {
+                val message = runCatching {
+                    val http = okhttp3.OkHttpClient.Builder()
+                        .callTimeout(10, java.util.concurrent.TimeUnit.SECONDS).build()
+                    http.newCall(okhttp3.Request.Builder().url("$url/api/").header("Authorization", "Bearer $token").build()).execute().use {
+                        check(it.isSuccessful) { "HTTP ${it.code}" }
+                        org.json.JSONObject(it.body!!.string()).optString("message", "OK")
+                    }
+                }
+                runOnUiThread {
+                    Toast.makeText(this, message.fold({ "接続できました（$it）" }, { "接続できません: ${it.message}" }), Toast.LENGTH_LONG).show()
+                }
+            }.start()
+        }
         addRow(rightPane, "公開MCPサーバーURL（HTTPS）", settings.get("mcpUrl").ifBlank { "未設定" }) {
             showEditDialog("公開MCPサーバーURL（HTTPS）", settings.get("mcpUrl"), secret = false, inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI) { value ->
                 val ok = value.isBlank() || (Uri.parse(value).scheme == "https" && !Uri.parse(value).host.isNullOrBlank())

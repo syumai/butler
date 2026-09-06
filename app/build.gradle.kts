@@ -32,6 +32,8 @@ dependencies {
     implementation("io.github.webrtc-sdk:android:150.7871.01")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     testImplementation("junit:junit:4.13.2")
+    // Real org.json impl for unit tests: the android.jar stub throws "not mocked" for JSONObject parsing.
+    testImplementation("org.json:json:20240303")
 }
 
 tasks.named("preBuild") { dependsOn(fetchDeps) }

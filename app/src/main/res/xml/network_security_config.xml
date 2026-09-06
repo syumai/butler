@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Allows plain HTTP only for the LAN Home Assistant server; everything else keeps the platform default (HTTPS, system trust store). -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>
