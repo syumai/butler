@@ -4,14 +4,18 @@ import android.Manifest
 import android.app.*
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.res.ColorStateList
 import android.graphics.*
+import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.RippleDrawable
 import android.net.Uri
 import android.os.*
 import android.text.SpannableString
 import android.text.Spanned
 import android.text.method.LinkMovementMethod
 import android.text.style.URLSpan
+import android.util.TypedValue
 import android.view.*
 import android.widget.*
 import org.json.JSONArray
@@ -76,10 +80,37 @@ class MainActivity : Activity() {
     private fun TextView.updateText(value: String) { if (text.toString() != value) text = value }
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
     private fun text(size: Float, value: String = "") = TextView(this).apply { textSize = size; text = value; setTextColor(Color.rgb(245, 239, 227)) }
-    private fun button(label: String, clicked: () -> Unit) = Button(this).apply {
-        text = label; isAllCaps = false; textSize = 12f; setTextColor(Color.WHITE)
-        backgroundTintList = android.content.res.ColorStateList.valueOf(Color.argb(170, 38, 62, 65))
+    /** Rounded-rect shape used as both the button's visible background and its ripple mask. */
+    private fun roundedShape(radius: Float, fill: Int = Color.WHITE, strokeColor: Int? = null, strokeWidth: Int = 0) = GradientDrawable().apply {
+        shape = GradientDrawable.RECTANGLE; cornerRadius = radius
+        if (strokeColor != null) { setColor(Color.TRANSPARENT); setStroke(strokeWidth, strokeColor) } else setColor(fill)
+    }
+    private fun rippleOn(content: Drawable, radius: Float, rippleColor: Int) =
+        RippleDrawable(ColorStateList.valueOf(rippleColor), content, roundedShape(radius))
+    /** Material "contained" button: filled rounded background (tinted), white ripple, default press elevation from the theme's Button style. */
+    private fun filledButton(label: String, textSizeSp: Float, tint: Int, clicked: () -> Unit) = Button(this).apply {
+        text = label; isAllCaps = false; textSize = textSizeSp; setTypeface(typeface, Typeface.BOLD); setTextColor(Color.WHITE)
+        val radius = dp(12).toFloat()
+        background = rippleOn(roundedShape(radius), radius, Color.argb(90, 255, 255, 255))
+        backgroundTintList = ColorStateList.valueOf(tint)
         setOnClickListener { clicked() }
+    }
+    /** Material "outlined" button: 1dp stroke, transparent fill, ripple; used for secondary actions. */
+    private fun outlinedButton(label: String, textSizeSp: Float, strokeColor: Int, clicked: () -> Unit) = Button(this).apply {
+        text = label; isAllCaps = false; textSize = textSizeSp; setTextColor(Color.rgb(245, 239, 227))
+        val radius = dp(10).toFloat()
+        background = rippleOn(roundedShape(radius, strokeColor = strokeColor, strokeWidth = dp(1)), radius, Color.argb(70, strokeColor.red(), strokeColor.green(), strokeColor.blue()))
+        backgroundTintList = null
+        setPadding(dp(16), paddingTop, dp(16), paddingBottom)
+        setOnClickListener { clicked() }
+    }
+    private fun Int.red() = Color.red(this)
+    private fun Int.green() = Color.green(this)
+    private fun Int.blue() = Color.blue(this)
+    /** Borderless ripple used for icon buttons, matching the theme's ?attr/selectableItemBackgroundBorderless. */
+    private fun borderlessRippleBackground(): Drawable {
+        val out = TypedValue(); theme.resolveAttribute(android.R.attr.selectableItemBackgroundBorderless, out, true)
+        return getDrawable(out.resourceId)!!
     }
     private fun home() {
         val root = FrameLayout(this)
@@ -91,7 +122,13 @@ class MainActivity : Activity() {
         root.addView(column, FrameLayout.LayoutParams(-1, -1))
         val header = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
         header.addView(text(12f, "B U T L E R"), LinearLayout.LayoutParams(0, -2, 1f))
-        header.addView(button("設定") { startActivity(Intent(this, SettingsActivity::class.java)) }, LinearLayout.LayoutParams(dp(72), dp(42)))
+        val settingsButton = ImageButton(this).apply {
+            setImageResource(R.drawable.ic_settings); scaleType = ImageView.ScaleType.CENTER
+            background = borderlessRippleBackground()
+            contentDescription = "設定"
+            setOnClickListener { startActivity(Intent(this@MainActivity, SettingsActivity::class.java)) }
+        }
+        header.addView(settingsButton, LinearLayout.LayoutParams(dp(48), dp(48)))
         column.addView(header)
         clock = text(88f).apply { typeface = Typeface.create("sans-serif-thin", Typeface.NORMAL); includeFontPadding = false }
         column.addView(clock)
@@ -103,18 +140,18 @@ class MainActivity : Activity() {
         transcript = text(15f).apply { maxLines = 2; setPadding(0, dp(8), 0, 0) }
         column.addView(transcript, LinearLayout.LayoutParams(-1, 0, 1f))
         status = text(12f); column.addView(status)
+        // All four controls share one fixed row height (56dp) via explicit LayoutParams height, never wrap_content,
+        // so their top/bottom edges line up regardless of label length; gravity centers them within the row.
+        val controlHeight = dp(56)
         val controls = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(8), 0, 0) }
-        talk = Button(this).apply {
-            text = "話しかける"; isAllCaps = false; textSize = 22f; setTypeface(typeface, Typeface.BOLD); setTextColor(Color.WHITE)
-            backgroundTintList = android.content.res.ColorStateList.valueOf(Color.argb(230, 46, 110, 118))
-            setOnClickListener { action(AssistantService.TALK) }
-        }
-        controls.addView(talk, LinearLayout.LayoutParams(0, dp(64), 1f))
-        end = button("会話終了") { action(AssistantService.END) }.apply { textSize = 16f; visibility = View.GONE }
-        controls.addView(end, LinearLayout.LayoutParams(dp(120), dp(64)).apply { marginStart = dp(8) })
-        controls.addView(button("出典") { showSources() }, LinearLayout.LayoutParams(-2, -2).apply { marginStart = dp(8) })
-        approve = button("実行を確認") { showApproval() }; approve.visibility = View.GONE
-        controls.addView(approve, LinearLayout.LayoutParams(-2, -2).apply { marginStart = dp(8) })
+        talk = filledButton("話しかける", 22f, Color.argb(230, 46, 110, 118)) { action(AssistantService.TALK) }
+        controls.addView(talk, LinearLayout.LayoutParams(0, controlHeight, 1f))
+        end = outlinedButton("会話終了", 16f, Color.rgb(217, 198, 165)) { action(AssistantService.END) }.apply { visibility = View.GONE }
+        controls.addView(end, LinearLayout.LayoutParams(dp(120), controlHeight).apply { marginStart = dp(8) })
+        controls.addView(outlinedButton("出典", 16f, Color.argb(160, 217, 198, 165)) { showSources() },
+            LinearLayout.LayoutParams(-2, controlHeight).apply { marginStart = dp(8) })
+        approve = outlinedButton("実行を確認", 16f, Color.argb(160, 217, 198, 165)) { showApproval() }.apply { visibility = View.GONE }
+        controls.addView(approve, LinearLayout.LayoutParams(-2, controlHeight).apply { marginStart = dp(8) })
         column.addView(controls)
         setContentView(root)
     }
