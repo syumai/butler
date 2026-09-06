@@ -52,12 +52,14 @@ Read operations are distinguished from operations that make external changes, an
 
 The home screen shows an image background suited to a landscape display, a dark overlay to preserve readability, a large clock, the date, and the weather. During a voice conversation, state, captions, and an end button are overlaid. The background image can be chosen from the device, and a nighttime brightness adjustment is also a candidate setting.
 
+Background rendering has three levels of precedence: the weather scene (when the "weather-linked background" setting is on and the current scene is known) takes priority over the imported photo, which in turn takes priority over the original code-drawn illustration. `WeatherScene` maps the same Open-Meteo weather code and day/night flag already used for the weather text into a coarse scene (clear/partly cloudy/cloudy/fog/rain/snow/thunder), and it is recomputed on each periodic weather refresh. All scenes are code-drawn and static — no animation, and geometry is only recomputed when the scene or view size changes — reusing the illustration's ridge silhouettes with scene-specific palettes and simple deterministic elements (stars, clouds, rain streaks, snow, lightning).
+
 Configurable items:
 
 - OpenAI API key, voice model, and voice.
 - Number of seconds of silence before ending the conversation. 30 seconds is a provisional default, not a confirmed user value.
 - Weather region search/selection, with direct latitude/longitude entry as an option.
-- Background image, and 12/24-hour clock display.
+- Background image, 12/24-hour clock display, and the weather-linked background toggle.
 - Wake word detection threshold (the model itself is bundled).
 - MCP server URL, authentication, tools to use, and approval policy.
 - Starting/stopping microphone standby.

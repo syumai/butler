@@ -33,5 +33,5 @@ class ToolClient {
         return result.put("content", parts)
     }
     fun weather(lat: Double, lon: Double): JSONObject = request(Request.Builder().url(
-        "https://api.open-meteo.com/v1/forecast?latitude=$lat&longitude=$lon&current=temperature_2m,weather_code&timezone=auto").build())
+        "https://api.open-meteo.com/v1/forecast?latitude=$lat&longitude=$lon&current=temperature_2m,weather_code,is_day&timezone=auto").build())
 }

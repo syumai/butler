@@ -33,6 +33,8 @@ class MainActivity : Activity() {
     private lateinit var talk: Button
     private lateinit var end: Button
     private lateinit var approve: Button
+    private lateinit var landscape: Landscape
+    private var scene = WeatherScene.DEFAULT
     private var weatherAt = 0L
     private var weatherInFlight = false
     private var visible = false
@@ -79,7 +81,8 @@ class MainActivity : Activity() {
     }
     private fun home() {
         val root = FrameLayout(this)
-        root.addView(Landscape(this, settings.background), FrameLayout.LayoutParams(-1, -1))
+        landscape = Landscape(this, settings.background, settings).apply { scene = this@MainActivity.scene }
+        root.addView(landscape, FrameLayout.LayoutParams(-1, -1))
         val shade = View(this).apply { background = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, intArrayOf(0xBB102326.toInt(), 0x20102326)) }
         root.addView(shade, FrameLayout.LayoutParams(-1, -1))
         val column = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(34), dp(20), dp(34), dp(12)) }
@@ -156,6 +159,7 @@ class MainActivity : Activity() {
         field("mcpUrl", "公開MCPサーバーURL（任意・HTTPS）")
         field("mcpToken", "MCP Bearer token（必要な場合）", secret = true)
         val enabled = Switch(this).apply { text = "選択した呼びかけを待つ"; isChecked = settings.enabled }; form.addView(enabled)
+        val weatherBg = Switch(this).apply { text = "天気に合わせて背景を変える"; isChecked = settings.weatherBackground }; form.addView(weatherBg)
         form.addView(text(12f, "英語の発音で呼びかけてください。モデル同梱・登録不要・端末内検知のみ。"))
         form.addView(button("背景画像を選ぶ") { pick(21, "image/*") })
         form.addView(button("保存済みAPIキーとMCP認証を削除") {
@@ -178,7 +182,8 @@ class MainActivity : Activity() {
                         else settings.set(key, edit.text.toString().trim())
                     }
                     settings.set("wakePhrase", WakePhrase.entries[phrase.selectedItemPosition].name)
-                    settings.enabled = enabled.isChecked; weatherAt = 0; dialog.dismiss(); home()
+                    settings.enabled = enabled.isChecked; settings.weatherBackground = weatherBg.isChecked
+                    weatherAt = 0; dialog.dismiss(); home()
                     if (settings.enabled) action(AssistantService.START)
                 } catch (_: Exception) { Toast.makeText(this, "数値の範囲、緯度経度、HTTPS URLを確認してください", Toast.LENGTH_LONG).show() }
             }
@@ -217,13 +222,23 @@ class MainActivity : Activity() {
         weatherInFlight = true
         val place = settings.get("location", "設定地域")
         worker.execute {
+            var fetchedScene: WeatherScene? = null
             val result = runCatching {
                 val current = weatherClient.weather(lat, lon).getJSONObject("current")
                 val code = current.getInt("weather_code")
+                val isDay = current.optInt("is_day", 1) == 1
+                fetchedScene = WeatherScene.of(code, isDay)
                 val sky = when (code) { 0 -> "晴れ"; 1, 2 -> "晴れ時々曇り"; 3 -> "曇り"; 45, 48 -> "霧"; in 51..67, in 80..82 -> "雨"; in 71..77, 85, 86 -> "雪"; in 95..99 -> "雷雨"; else -> "天気" }
                 "$place  ·  ${current.getDouble("temperature_2m")}°C  $sky\nOpen-Meteo  ·  ${current.getString("time").replace('T', ' ')}"
             }.getOrElse { "天気を取得できませんでした · Open-Meteo" }
-            main.post { weatherInFlight = false; if (!isDestroyed && settings.get("latitude").toDoubleOrNull() == lat && settings.get("longitude").toDoubleOrNull() == lon) weather.text = result }
+            main.post {
+                weatherInFlight = false
+                if (!isDestroyed && settings.get("latitude").toDoubleOrNull() == lat && settings.get("longitude").toDoubleOrNull() == lon) {
+                    weather.text = result
+                    // Leave the scene unchanged on failure; only update it once a fetch actually succeeded.
+                    fetchedScene?.let { scene = it; landscape.scene = it }
+                }
+            }
         }
     }
     private fun showApproval() {
@@ -255,8 +270,8 @@ class MainActivity : Activity() {
     }
 }
 
-/** Original code-drawn landscape; users can replace it with a local photograph. */
-private class Landscape(context: android.content.Context, file: File) : View(context) {
+/** Original code-drawn landscape; users can replace it with a local photograph, or with a weather-linked scene. */
+private class Landscape(context: android.content.Context, file: File, private val settings: Settings) : View(context) {
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val bitmap: Bitmap? = if (file.exists()) {
         val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }; BitmapFactory.decodeFile(file.path, options)
@@ -264,8 +279,15 @@ private class Landscape(context: android.content.Context, file: File) : View(con
         while (options.outWidth / options.inSampleSize > 1600 || options.outHeight / options.inSampleSize > 1000) options.inSampleSize *= 2
         options.inJustDecodeBounds = false; BitmapFactory.decodeFile(file.path, options)
     } else null
+    // Weather-linked background; only used when the setting is on and the scene is known. Rendering
+    // precedence: weather scene > imported photo > default illustration (unchanged, pixel-identical).
+    var scene: WeatherScene = WeatherScene.DEFAULT
+        set(value) { field = value; invalidate() }
+    private var art: SceneArt? = null
     override fun onDraw(canvas: Canvas) {
+        paint.style = Paint.Style.FILL
         val w = width.toFloat(); val h = height.toFloat()
+        if (settings.weatherBackground && scene != WeatherScene.DEFAULT) { drawScene(canvas, w, h); return }
         bitmap?.let {
             val scale = maxOf(w / it.width, h / it.height); val bw = it.width * scale; val bh = it.height * scale
             canvas.drawBitmap(it, null, RectF((w-bw)/2, (h-bh)/2, (w+bw)/2, (h+bh)/2), paint); return
@@ -281,5 +303,147 @@ private class Landscape(context: android.content.Context, file: File) : View(con
         ridge(0xFF78918A.toInt(), .65f, .24f, .1f)
         ridge(0xFF446B68.toInt(), .8f, .5f, -.15f)
         ridge(0xFF1A4247.toInt(), 1f, .56f, .2f)
+    }
+    // Weather scenes are code-drawn and static (no animation, cheap for a 32-bit ARM device). The
+    // precomputed geometry (SceneArt) is rebuilt only when the scene or the view size changes.
+    private fun drawScene(canvas: Canvas, w: Float, h: Float) {
+        var a = art
+        if (a == null || a.scene != scene || a.w != w || a.h != h) { a = SceneArt(scene, w, h); art = a }
+        paint.shader = LinearGradient(0f, 0f, w, h, a.sky, null, Shader.TileMode.CLAMP)
+        canvas.drawRect(0f, 0f, w, h, paint); paint.shader = null
+        a.sun?.let { paint.color = a.sunColor; canvas.drawCircle(it[0], it[1], it[2], paint) }
+        a.moon?.let { m ->
+            paint.color = 0xFFEFEFE0.toInt(); canvas.drawCircle(m[0], m[1], m[2], paint)
+            // A second, sky-colored circle offset over the disc turns it into a crescent.
+            paint.color = a.sky[0]; canvas.drawCircle(m[0] + m[2] * .5f, m[1] - m[2] * .3f, m[2] * .92f, paint)
+        }
+        for (star in a.stars) { paint.color = 0xFFF5F3E0.toInt(); canvas.drawCircle(star[0], star[1], star[2], paint) }
+        for (cloud in a.clouds) { paint.color = a.cloudColor; for (c in cloud) canvas.drawCircle(c[0], c[1], c[2], paint) }
+        if (a.fogBand) { paint.color = 0x66FFFFFF.toInt(); canvas.drawRect(0f, h * .55f, w, h * .68f, paint) }
+        for (i in a.ridges.indices) {
+            a.ridgeCaps[i]?.let { paint.color = a.capColor; canvas.drawPath(it, paint) }
+            paint.color = a.ridgeColors[i]; paint.alpha = a.ridgeAlphas[i]; canvas.drawPath(a.ridges[i], paint)
+        }
+        if (a.rainLines.isNotEmpty()) { paint.color = 0xAAB9D6E0.toInt(); paint.strokeWidth = 2f; canvas.drawLines(a.rainLines, paint) }
+        for (dot in a.snowDots) { paint.color = 0xFFFFFFFF.toInt(); canvas.drawCircle(dot[0], dot[1], dot[2], paint) }
+        a.lightning?.let { paint.style = Paint.Style.STROKE; paint.strokeWidth = 4f; paint.color = 0xFFF5E9A0.toInt(); canvas.drawPath(it, paint); paint.style = Paint.Style.FILL }
+    }
+}
+
+/** Precomputed, deterministic geometry for one weather scene at one view size; rebuilt only on change. */
+private class SceneArt(val scene: WeatherScene, val w: Float, val h: Float) {
+    val sky: IntArray
+    var sun: FloatArray? = null // cx, cy, r
+    var sunColor = 0
+    var moon: FloatArray? = null // cx, cy, r
+    val stars = mutableListOf<FloatArray>() // cx, cy, r
+    val clouds = mutableListOf<List<FloatArray>>() // each cloud is a union of circles: cx, cy, r
+    var cloudColor = 0
+    var fogBand = false
+    val ridges = mutableListOf<Path>()
+    val ridgeColors = mutableListOf<Int>()
+    val ridgeAlphas = mutableListOf<Int>()
+    val ridgeCaps = mutableListOf<Path?>()
+    var capColor = 0
+    var rainLines = FloatArray(0) // x1, y1, x2, y2 per streak, for a single drawLines() call
+    val snowDots = mutableListOf<FloatArray>() // cx, cy, r
+    var lightning: Path? = null
+    init {
+        // Seeded by the scene so the same scene always lays out the same stars/clouds/rain (no flicker
+        // across redraws) while different scenes still look distinct from each other.
+        val rnd = Random(scene.ordinal * 97L + 13L)
+        val ridgeDefs = listOf(Triple(.65f, .24f, .1f), Triple(.8f, .5f, -.15f), Triple(1f, .56f, .2f))
+        fun ridgePath(base: Float, peak: Float, shift: Float) = Path().apply {
+            moveTo(0f, h * base)
+            cubicTo(w * .25f, h * (base - .12f), w * (.42f + shift), h * peak, w * .67f, h * (base - .08f))
+            cubicTo(w * .84f, h * (base + .1f), w * .9f, h * (peak + .1f), w, h * base)
+            lineTo(w, h); lineTo(0f, h); close()
+        }
+        fun cloud(cx: Float, cy: Float, scale: Float) = listOf(
+            floatArrayOf(cx, cy, .09f * h * scale),
+            floatArrayOf(cx - .07f * w * scale, cy + .015f * h, .065f * h * scale),
+            floatArrayOf(cx + .075f * w * scale, cy + .01f * h, .07f * h * scale),
+            floatArrayOf(cx + .02f * w * scale, cy - .03f * h, .06f * h * scale)
+        )
+        fun addClouds(count: Int, color: Int) {
+            cloudColor = color
+            repeat(count) { clouds.add(cloud(w * (.15f + rnd.nextFloat() * .7f), h * (.12f + rnd.nextFloat() * .22f), .8f + rnd.nextFloat() * .5f)) }
+        }
+        fun addRidges(colors: List<Int>, alphas: List<Int> = listOf(255, 255, 255), whiteCap: Boolean = false) {
+            ridgeDefs.forEachIndexed { i, (base, peak, shift) ->
+                ridges.add(ridgePath(base, peak, shift)); ridgeColors.add(colors[i]); ridgeAlphas.add(alphas[i])
+                // A thin sliver of the (lighter) cap path drawn just above the ridge peak reads as a snow cap.
+                ridgeCaps.add(if (whiteCap) ridgePath(peak + .03f, peak - .02f, shift) else null)
+            }
+            if (whiteCap) capColor = 0xCCF2F5F7.toInt()
+        }
+        fun addRain(count: Int) {
+            val lines = FloatArray(count * 4)
+            for (i in 0 until count) {
+                val x = rnd.nextFloat() * w; val y = rnd.nextFloat() * h * .85f; val len = h * (.05f + rnd.nextFloat() * .05f)
+                lines[i * 4] = x; lines[i * 4 + 1] = y; lines[i * 4 + 2] = x - len * .28f; lines[i * 4 + 3] = y + len
+            }
+            rainLines = lines
+        }
+        fun addSnow(count: Int) { repeat(count) { snowDots.add(floatArrayOf(rnd.nextFloat() * w, rnd.nextFloat() * h * .9f, 1.5f + rnd.nextFloat() * 2.5f)) } }
+        when (scene) {
+            WeatherScene.CLEAR_DAY -> {
+                sky = intArrayOf(0xFF3E7BC4.toInt(), 0xFF7FB8D9.toInt(), 0xFFF2C879.toInt())
+                sun = floatArrayOf(w * .78f, h * .28f, h * .105f); sunColor = 0xFFE7D7A9.toInt()
+                addRidges(listOf(0xFF8FAE6E.toInt(), 0xFF5E8C4E.toInt(), 0xFF355B33.toInt()))
+            }
+            WeatherScene.CLEAR_NIGHT -> {
+                sky = intArrayOf(0xFF060B1F.toInt(), 0xFF11213F.toInt(), 0xFF1C2F52.toInt())
+                moon = floatArrayOf(w * .76f, h * .24f, h * .085f)
+                repeat(24) { stars.add(floatArrayOf(rnd.nextFloat() * w, rnd.nextFloat() * h * .6f, 1f + rnd.nextFloat() * 1.8f)) }
+                addRidges(listOf(0xFF2A3A5C.toInt(), 0xFF1B2740.toInt(), 0xFF0E1626.toInt()))
+            }
+            WeatherScene.PARTLY_CLOUDY_DAY -> {
+                sky = intArrayOf(0xFF3E7BC4.toInt(), 0xFF7FB8D9.toInt(), 0xFFF2C879.toInt())
+                sun = floatArrayOf(w * .78f, h * .28f, h * .105f); sunColor = 0xFFE7D7A9.toInt()
+                addClouds(3, 0xDDEFEFEF.toInt())
+                addRidges(listOf(0xFF8FAE6E.toInt(), 0xFF5E8C4E.toInt(), 0xFF355B33.toInt()))
+            }
+            WeatherScene.PARTLY_CLOUDY_NIGHT -> {
+                sky = intArrayOf(0xFF060B1F.toInt(), 0xFF11213F.toInt(), 0xFF1C2F52.toInt())
+                moon = floatArrayOf(w * .76f, h * .24f, h * .085f)
+                repeat(16) { stars.add(floatArrayOf(rnd.nextFloat() * w, rnd.nextFloat() * h * .55f, 1f + rnd.nextFloat() * 1.8f)) }
+                addClouds(3, 0xCC3A3F4A.toInt())
+                addRidges(listOf(0xFF2A3A5C.toInt(), 0xFF1B2740.toInt(), 0xFF0E1626.toInt()))
+            }
+            WeatherScene.CLOUDY -> {
+                sky = intArrayOf(0xFF7D8285.toInt(), 0xFF9AA0A2.toInt(), 0xFFB7BBBC.toInt())
+                addClouds(4, 0xEEDCDFE0.toInt())
+                addRidges(listOf(0xFF8A8F91.toInt(), 0xFF666B6D.toInt(), 0xFF454A4C.toInt()))
+            }
+            WeatherScene.FOG -> {
+                sky = intArrayOf(0xFFCED4D5.toInt(), 0xFFDBE0E1.toInt(), 0xFFE7EAEA.toInt())
+                fogBand = true
+                addRidges(listOf(0xFFB9C0C2.toInt(), 0xFFB9C0C2.toInt(), 0xFFB9C0C2.toInt()), listOf(220, 150, 90))
+            }
+            WeatherScene.RAIN -> {
+                sky = intArrayOf(0xFF232E38.toInt(), 0xFF34434F.toInt(), 0xFF44545F.toInt())
+                addClouds(3, 0xEE2C343B.toInt())
+                addRidges(listOf(0xFF3A5A5C.toInt(), 0xFF25403F.toInt(), 0xFF142B2A.toInt()))
+                addRain(60)
+            }
+            WeatherScene.SNOW -> {
+                sky = intArrayOf(0xFFB9C4D0.toInt(), 0xFFCBD5DE.toInt(), 0xFFDCE4EA.toInt())
+                addClouds(3, 0xEEE9EEF2.toInt())
+                addRidges(listOf(0xFF6E7B8C.toInt(), 0xFF4F5A6B.toInt(), 0xFF37404E.toInt()), whiteCap = true)
+                addSnow(50)
+            }
+            WeatherScene.THUNDER -> {
+                sky = intArrayOf(0xFF0C0E14.toInt(), 0xFF14161F.toInt(), 0xFF1B1E2A.toInt())
+                addClouds(4, 0xF01A1D24.toInt())
+                addRidges(listOf(0xFF23262E.toInt(), 0xFF16181D.toInt(), 0xFF0A0B0E.toInt()))
+                addRain(45)
+                lightning = Path().apply {
+                    val x = w * .4f
+                    moveTo(x, h * .1f); lineTo(x + w * .04f, h * .28f); lineTo(x - w * .02f, h * .3f); lineTo(x + w * .05f, h * .5f)
+                }
+            }
+            WeatherScene.DEFAULT -> sky = intArrayOf(0xFF254C50.toInt(), 0xFF81988D.toInt(), 0xFFE7BF8D.toInt()) // unused: caller skips DEFAULT
+        }
     }
 }

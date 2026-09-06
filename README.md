@@ -43,6 +43,7 @@ Wake word detection is entirely self-contained via the bundled sherpa-onnx model
 - WebRTC voice conversation, Japanese instructions, semantic VAD, interruption support, and a configurable silence timeout.
 - Web search via the Responses API with clickable citations. In-app history is discarded when a conversation ends, and searches specify `store: false`.
 - Weather display via Open-Meteo. The region name and latitude/longitude are configurable. A place-name search UI and a persistent weather cache are not yet implemented.
+- Optional weather-linked home screen background ("天気に合わせて背景を変える" in Settings): when enabled, the background is replaced by a code-drawn scene matching the current outdoor weather code and day/night state (clear, partly cloudy, cloudy, fog, rain, snow, thunder), redrawn on each 15-minute weather refresh. Off by default; when off, or while the scene is unknown, the imported photo or the original illustration is shown as before.
 - One public HTTPS MCP server can be configured, with on-screen approval for each call. LAN-based MCP clients, OAuth flows, and managing multiple servers are not yet implemented.
 - The API key is encrypted with Android Keystore, and backups are disabled. This does not guarantee full key protection if the device itself is compromised.
 - Targets a specific Android 11 device (targetSdk 35, armeabi-v7a). Not configured for Play Store publication.
