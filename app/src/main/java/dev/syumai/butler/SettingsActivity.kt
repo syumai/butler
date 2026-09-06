@@ -226,8 +226,8 @@ class SettingsActivity : Activity() {
                 if (value.isBlank()) false else { settings.set("model", value); applyServiceState(); renderCategory(selected); true }
             }
         }
-        addRow(rightPane, "検索モデル", settings.get("searchModel", "gpt-4.1-mini")) {
-            showEditDialog("検索モデル", settings.get("searchModel", "gpt-4.1-mini"), secret = false, inputType = InputType.TYPE_CLASS_TEXT) { value ->
+        addRow(rightPane, "検索モデル", settings.get("searchModel", "gpt-5.6-luna")) {
+            showEditDialog("検索モデル", settings.get("searchModel", "gpt-5.6-luna"), secret = false, inputType = InputType.TYPE_CLASS_TEXT) { value ->
                 if (value.isBlank()) false else { settings.set("searchModel", value); applyServiceState(); renderCategory(selected); true }
             }
         }

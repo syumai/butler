@@ -18,7 +18,7 @@ class ToolClient {
         JSONObject(source.readUtf8())
     }
     fun search(settings: Settings, query: String): JSONObject {
-        val body = JSONObject().put("model", settings.get("searchModel", "gpt-4.1-mini"))
+        val body = JSONObject().put("model", settings.get("searchModel", "gpt-5.6-luna"))
             .put("store", false).put("max_output_tokens", 1800)
             .put("tools", JSONArray().put(JSONObject().put("type", "web_search")))
             .put("tool_choice", "required").put("input", "日本語で簡潔に回答し、出典を付けてください。質問: ${query.take(2000)}")
