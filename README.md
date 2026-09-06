@@ -1,5 +1,7 @@
 # Butler
 
+<p align="center"><img src="docs/assets/butler.png" alt="Butler, a curved teal moustache floating above a gold bow tie" width="256" /></p>
+
 An always-listening Japanese voice AI assistant for a 32-bit ARM Android 11 (LineageOS 18.1) tablet.
 
 A native Android app under development. It bundles a wake word model and only requires an OpenAI API key to be configured — a self-contained setup. On-device verification of the voice/API flow is not yet complete.
@@ -62,6 +64,18 @@ Wake word detection is entirely self-contained via the bundled sherpa-onnx model
 Loading the model takes about 10 seconds the first time detection starts. While the service is running, the weights are reused, and only the audio stream is discarded and recreated for each conversation.
 
 The wake word can be verified without an API key. Voice conversation with OpenAI is verified after registering an API key. The default model ID is configurable in Settings and depends on availability per account.
+
+## Butler character
+
+The original Butler mark pairs a curved teal moustache with a large gold bow tie. These two floating shapes provide its identity without a face, skin tones, clothing silhouette or serving props. The same artwork is used for the app icon and optional home-screen companion. The Android launcher uses a dedicated adaptive icon with a cool-white background and enlarged, centered foreground (56dp wide on a 108dp layer), fitted within the 66dp safe circle. Circular and rounded-square masks are supported, along with themed icons on Android 13+.
+
+In **設定 → 天気と背景**, enable **執事キャラクターを表示** to place the character beside the clock (off by default). **執事キャラクターを動かす** controls its gentle bobbing and swaying independently (on by default); it moves a little more energetically during a conversation. Motion stops when the screen is paused or detached and respects Android's disabled animator setting. The character is decorative; the status text remains the source of conversation state.
+
+- Editable master: [SVG](docs/assets/butler.svg)
+- Transparent 1024 × 1024 export: [PNG](docs/assets/butler.png)
+- Regenerate the PNG and Android VectorDrawables with `python3 scripts/render-brand.py` (requires Python 3 and `rsvg-convert` from librsvg). No rendering dependencies are needed at app runtime.
+
+The artwork is included under this repository's MIT license.
 
 ## Wake word on-device testing
 

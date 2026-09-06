@@ -38,6 +38,7 @@ class MainActivity : Activity() {
     private lateinit var end: Button
     private lateinit var approve: Button
     private lateinit var landscape: Landscape
+    private var butler: ButlerView? = null
     private var scene = WeatherScene.DEFAULT
     private var weatherAt = 0L
     private var weatherInFlight = false
@@ -49,6 +50,7 @@ class MainActivity : Activity() {
             val now = Date()
             clock.updateText(SimpleDateFormat("HH:mm", Locale.JAPAN).format(now))
             date.updateText(SimpleDateFormat("M月d日 EEEE", Locale.JAPAN).format(now))
+            butler?.conversing = AssistantService.conversing
             status.updateText(AssistantService.status)
             transcript.updateText(AssistantService.transcript)
             approve.visibility = if (AssistantService.approval != null) View.VISIBLE else View.GONE
@@ -73,9 +75,10 @@ class MainActivity : Activity() {
         super.onResume(); visible = true; main.removeCallbacks(tick); main.post(tick)
         // Rebuild the home screen if SettingsActivity changed something it reflects (background, weather region/toggle).
         if (Settings.dirty) { Settings.dirty = false; weatherAt = 0; home() }
+        butler?.let { it.active = true; it.refreshMotion() }
         if (settings.enabled && checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) action(AssistantService.START)
     }
-    override fun onPause() { visible = false; main.removeCallbacks(tick); super.onPause() }
+    override fun onPause() { butler?.let { it.active = false; it.refreshMotion() }; visible = false; main.removeCallbacks(tick); super.onPause() }
     override fun onDestroy() { weatherClient.cancel(); worker.shutdownNow(); main.removeCallbacksAndMessages(null); super.onDestroy() }
     private fun TextView.updateText(value: String) { if (text.toString() != value) text = value }
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
@@ -113,6 +116,8 @@ class MainActivity : Activity() {
         return getDrawable(out.resourceId)!!
     }
     private fun home() {
+        butler?.let { it.active = false; it.refreshMotion() }
+        butler = null
         val root = FrameLayout(this)
         landscape = Landscape(this, settings.background, settings).apply { scene = this@MainActivity.scene }
         root.addView(landscape, FrameLayout.LayoutParams(-1, -1))
@@ -131,7 +136,17 @@ class MainActivity : Activity() {
         header.addView(settingsButton, LinearLayout.LayoutParams(dp(48), dp(48)))
         column.addView(header)
         clock = text(88f).apply { typeface = Typeface.create("sans-serif-thin", Typeface.NORMAL); includeFontPadding = false }
-        column.addView(clock)
+        val clockRow = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        clockRow.addView(clock, LinearLayout.LayoutParams(0, -2, 1f))
+        if (settings.showCharacter) {
+            butler = ButlerView(this).apply {
+                motionEnabled = settings.animateCharacter
+                active = visible
+                conversing = AssistantService.conversing
+            }
+            clockRow.addView(butler, LinearLayout.LayoutParams(dp(112), dp(104)))
+        }
+        column.addView(clockRow)
         date = text(17f); column.addView(date)
         weather = text(14f, "天気の地域を設定してください").apply { setPadding(0, dp(12), 0, 0); setOnClickListener {
             startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://open-meteo.com/")))

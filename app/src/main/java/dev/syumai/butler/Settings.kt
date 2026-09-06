@@ -33,6 +33,12 @@ class Settings(context: Context) {
     var weatherBackground: Boolean
         get() = prefs.getBoolean("weatherBackground", false)
         set(value) { prefs.edit().putBoolean("weatherBackground", value).apply() }
+    var showCharacter: Boolean
+        get() = prefs.getBoolean("showCharacter", false)
+        set(value) { prefs.edit().putBoolean("showCharacter", value).apply() }
+    var animateCharacter: Boolean
+        get() = prefs.getBoolean("animateCharacter", true)
+        set(value) { prefs.edit().putBoolean("animateCharacter", value).apply() }
     // Wake phrase selection is not exposed to the user yet; fixed to Hey Butler. The enum and the other
     // phrase assets are kept for the instrumentation tests.
     val wakePhrase get() = WakePhrase.HEY_BUTLER
