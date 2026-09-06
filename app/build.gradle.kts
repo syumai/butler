@@ -26,6 +26,7 @@ android {
     }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
     kotlinOptions { jvmTarget = "17" }
+    buildFeatures { buildConfig = true } // for BuildConfig.DEBUG, used by the debug.butler.scene override
 }
 dependencies {
     implementation(files("libs/sherpa-onnx-1.12.14.aar"))
