@@ -35,6 +35,7 @@ class AssistantService : Service() {
     private var pending = 0
     private var calls = 0
     private var followup = false
+    private var ending = false
     private var startedAt = 0L
     private var busySince = 0L
     private var idle = IdlePolicy(30_000)
@@ -116,7 +117,7 @@ class AssistantService : Service() {
             conversing = true
             generation++; transcript = ""; citations = ""; approval = null
             ready = false; speaking = false; responding = false; playing = false; pending = 0; calls = 0
-            followup = false; handled.clear(); mcpPending.clear(); startedAt = SystemClock.elapsedRealtime(); busySince = 0
+            followup = false; ending = false; handled.clear(); mcpPending.clear(); startedAt = SystemClock.elapsedRealtime(); busySince = 0
             idle = IdlePolicy(settings.timeoutSeconds * 1000); tools = ToolClient()
             status = "接続中…"
             val id = generation
@@ -132,7 +133,7 @@ class AssistantService : Service() {
         val defs = JSONArray().put(JSONObject().put("type", "function").put("name", "search_web")
             .put("description", "最新情報をインターネットで検索する")
             .put("parameters", JSONObject("""{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}""")))
-            .put(JSONObject().put("type", "function").put("name", "end_conversation").put("description", "ユーザーが会話の終了を求めたときに終了する")
+            .put(JSONObject().put("type", "function").put("name", "end_conversation").put("description", "ユーザーが会話の終了を求めたとき、短く別れの挨拶をしてから終了する")
                 .put("parameters", JSONObject("""{"type":"object","properties":{}}""")))
         val url = settings.get("mcpUrl")
         if (url.isNotBlank()) {
@@ -146,17 +147,30 @@ class AssistantService : Service() {
         when (e.optString("type")) {
             "session.created" -> realtime?.send(JSONObject().put("type", "session.update").put("session", JSONObject().put("type", "realtime").put("tools", definitions())))
             "session.updated" -> { if (!ready) { ready = true; realtime?.enableMicrophone(); status = "お話しください" } }
-            "input_audio_buffer.speech_started" -> { speaking = true; status = "聞いています"; idle.update(SystemClock.elapsedRealtime(), true) }
+            "input_audio_buffer.speech_started" -> { if (!ending) { speaking = true; status = "聞いています"; idle.update(SystemClock.elapsedRealtime(), true) } }
             "input_audio_buffer.speech_stopped" -> speaking = false
             "response.created" -> { idle.update(SystemClock.elapsedRealtime(), true); responding = true; transcript = ""; status = "応答中" }
             "output_audio_buffer.started" -> playing = true
-            "output_audio_buffer.stopped", "output_audio_buffer.cleared" -> { playing = false; if (!responding) status = "お話しください" }
+            "output_audio_buffer.stopped", "output_audio_buffer.cleared" -> {
+                playing = false
+                if (ending && !responding) { finish(); return }
+                if (!responding) status = "お話しください"
+            }
             "response.output_audio_transcript.delta" -> transcript = (transcript + e.optString("delta")).takeLast(4000)
             "response.function_call_arguments.done" -> {
                 val callId = e.getString("call_id")
                 if (!handled.add(callId)) return
                 if (++calls > 10) { finish("ツール呼び出しの上限に達しました"); return }
-                if (e.optString("name") == "end_conversation") { finish(); return }
+                if (e.optString("name") == "end_conversation") {
+                    ending = true; status = "会話を終了します"
+                    realtime?.disableMicrophone()
+                    realtime?.send(JSONObject().put("type", "conversation.item.create").put("item", JSONObject()
+                        .put("type", "function_call_output").put("call_id", callId).put("output", "{\"ok\":true}")))
+                    followup = true; maybeFollowup()
+                    val id = generation
+                    main.postDelayed({ if (generation == id && ending) finish() }, 20_000)
+                    return
+                }
                 pending++; followup = true; status = "検索中…"
                 val id = generation
                 val toolClient = tools
@@ -195,9 +209,12 @@ class AssistantService : Service() {
                     val code = response?.optJSONObject("status_details")?.optJSONObject("error")?.optString("code").orEmpty()
                     android.util.Log.w("Butler", "Response failed: ${code.take(80)}")
                     status = "音声応答に失敗しました。もう一度話しかけてください"
+                    if (ending) finish()
                     return
                 }
-                maybeFollowup(); if (!playing && pending == 0 && approval == null) status = "お話しください" }
+                maybeFollowup()
+                if (ending && !responding && !playing) finish()
+                else if (!playing && pending == 0 && approval == null) status = "お話しください" }
             "error" -> {
                 val code = e.optJSONObject("error")?.optString("code").orEmpty()
                 when (code) {
@@ -216,7 +233,7 @@ class AssistantService : Service() {
         }
     }
     private fun finish(message: String? = null) {
-        generation++; preparing = false; conversing = false; tools.cancel(); realtime?.close(); realtime = null
+        generation++; preparing = false; conversing = false; ending = false; tools.cancel(); realtime?.close(); realtime = null
         transcript = ""; citations = ""; approval = null
         waitForWake(message)
     }

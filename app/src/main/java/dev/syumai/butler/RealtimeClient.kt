@@ -110,6 +110,7 @@ class RealtimeClient(private val context: Context, private val settings: Setting
         }), MediaConstraints())
     }
     fun enableMicrophone() { track?.setEnabled(true) }
+    fun disableMicrophone() { track?.setEnabled(false) }
     private fun connect(sdp: String) {
         val session = JSONObject().put("type", "realtime").put("model", settings.get("model", "gpt-realtime-2.1"))
             .put("output_modalities", JSONArray().put("audio"))
