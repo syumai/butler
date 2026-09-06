@@ -39,7 +39,7 @@ Wake word detection is entirely self-contained via the bundled sherpa-onnx model
 ## Current features and limitations
 
 - Kotlin / native Views. Original landscape illustration background, clock, and support for importing an arbitrary image.
-- Wake phrase detection via sherpa-onnx 1.12.14 + the GigaSpeech 3.3M KWS model. The phrase and threshold are configurable.
+- Wake phrase detection via sherpa-onnx 1.12.14 + the GigaSpeech 3.3M KWS model. The phrase and threshold are configurable. A short synthesized chime plays immediately on wake detection, before the conversation connects.
 - WebRTC voice conversation, Japanese instructions, semantic VAD, interruption support, and a configurable silence timeout.
 - Web search via the Responses API with clickable citations. In-app history is discarded when a conversation ends, and searches specify `store: false`.
 - Weather display via Open-Meteo. The region name and latitude/longitude are configurable. A place-name search UI and a persistent weather cache are not yet implemented.

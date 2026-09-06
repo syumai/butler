@@ -11,9 +11,19 @@ import java.nio.ByteOrder
 class WakeInstrumentation : Instrumentation() {
     private var tune = false
     private var audioTest = false
-    override fun onCreate(arguments: Bundle?) { super.onCreate(arguments); tune = arguments?.getString("mode") == "tune"; audioTest = arguments?.getString("mode") == "audio"; start() }
+    private var chime = false
+    override fun onCreate(arguments: Bundle?) {
+        super.onCreate(arguments); tune = arguments?.getString("mode") == "tune"; audioTest = arguments?.getString("mode") == "audio"
+        chime = arguments?.getString("mode") == "chime"; start()
+    }
     override fun onStart() {
         if (audioTest) { AudioSmoke.run(this); return }
+        if (chime) {
+            WakeChime.play(targetContext)
+            SystemClock.sleep(600)
+            finish(Activity.RESULT_OK, Bundle().apply { putString("stream", "\nPASS: chime played, frames=${WakeChime.lastPlaybackFrames}\n") })
+            return
+        }
         val report = Bundle()
         try {
             val started = SystemClock.elapsedRealtime()
