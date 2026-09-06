@@ -202,6 +202,13 @@ class SettingsActivity : Activity() {
         dialog.show()
     }
 
+    /** Single-choice list dialog (e.g. picking a voice from a fixed set). */
+    private fun showChoiceDialog(title: String, items: List<String>, selectedIndex: Int, onPick: (Int) -> Unit) {
+        AlertDialog.Builder(this).setTitle(title)
+            .setSingleChoiceItems(items.toTypedArray(), selectedIndex) { dialog, which -> onPick(which); dialog.dismiss() }
+            .setNegativeButton("キャンセル", null).show()
+    }
+
     private fun renderCategory(index: Int) {
         rightPane.removeAllViews()
         when (index) {
@@ -224,6 +231,11 @@ class SettingsActivity : Activity() {
         addRow(rightPane, "音声モデル", settings.get("model", "gpt-realtime-2.1")) {
             showEditDialog("音声モデル", settings.get("model", "gpt-realtime-2.1"), secret = false, inputType = InputType.TYPE_CLASS_TEXT) { value ->
                 if (value.isBlank()) false else { settings.set("model", value); applyServiceState(); renderCategory(selected); true }
+            }
+        }
+        addRow(rightPane, "アシスタントの声", settings.voice.label) {
+            showChoiceDialog("アシスタントの声", Voice.entries.map { it.label }, Voice.entries.indexOf(settings.voice)) { which ->
+                settings.setVoice(Voice.entries[which]); applyServiceState(); renderCategory(selected)
             }
         }
         addRow(rightPane, "検索モデル", settings.get("searchModel", "gpt-5.6-luna")) {

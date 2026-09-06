@@ -37,6 +37,8 @@ class Settings(context: Context) {
     // phrase assets are kept for the instrumentation tests.
     val wakePhrase get() = WakePhrase.HEY_BUTLER
     val timeoutSeconds get() = get("timeout", "30").toLongOrNull()?.coerceIn(5, 600) ?: 30L
+    val voice get() = Voice.fromId(get("voice"))
+    fun setVoice(value: Voice) = set("voice", value.id)
     private fun key(): SecretKey {
         val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
         (store.getKey("butler-settings", null) as? SecretKey)?.let { return it }
