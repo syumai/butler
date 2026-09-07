@@ -1,6 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
-  <title>Butler — moustache and bow tie</title>
-  <desc>A minimal Butler mark: a curved teal moustache floating above a large gold bow tie. No face, skin tones, clothing silhouette or props.</desc>
-  <path fill="#28585C" d="M144 208Q200 232 224 196Q244 184 256 218Q268 184 288 196Q312 232 368 208Q344 280 256 236Q168 280 144 208Z"/>
-  <path fill="#D9B36C" d="M196 276L256 312L196 348Z M316 276V348L256 312Z"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 100 100">
+  <title>Butler — Desk Bell</title>
+  <desc>A brass desk bell with a deep teal push button and base.</desc>
+  <path fill="#A87522" d="M23 66A27 27 0 0 1 77 66Z"/>
+  <path fill="#163C40" d="M20 73H80A3 3 0 0 1 80 79H20A3 3 0 0 1 20 73Z"/>
+  <path fill="#163C40" d="M45 26H55V38H45Z"/>
 </svg>

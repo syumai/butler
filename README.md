@@ -1,6 +1,8 @@
 # Butler
 
-<p align="center"><img src="docs/assets/butler-icon.png" alt="Butler icon: a teal moustache and gold bow tie on a rounded white square" width="256" /></p>
+<p align="center"><img src="docs/assets/butler-icon.png" alt="Butler icon: a brass desk bell with a deep teal push button and base on a rounded white square" width="256" /></p>
+
+<p align="center"><em>The logo depicts a desk bell, symbolizing an assistant ready to respond when called.</em></p>
 
 An always-listening voice AI assistant for a 32-bit ARM Android 11 (LineageOS 18.1) tablet. The UI and conversation language follow the OS locale: English by default, Japanese when the device language is Japanese.
 
@@ -67,7 +69,7 @@ The wake word can be verified without an API key. Voice conversation with OpenAI
 
 ## Butler logo
 
-The original Butler mark pairs a curved teal moustache with a large gold bow tie. These two floating shapes provide its identity without a face, skin tones, clothing silhouette or serving props. The same artwork is used for the app icon and README. The Android launcher uses a dedicated adaptive icon with a cool-white background and enlarged, centered foreground (56dp wide on a 108dp layer), fitted within the 66dp safe circle. Circular and rounded-square masks are supported, along with themed icons on Android 13+.
+The Butler logo is a brass desk bell with a deep teal push button and base. The Android app uses an adaptive icon with a cool-white background, with support for circular masks, rounded-square masks and themed icons.
 
 - Rounded-square README icon: [PNG](docs/assets/butler-icon.png) · [SVG](docs/assets/butler-icon.svg)
 - Editable master: [SVG](docs/assets/butler.svg)
