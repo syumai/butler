@@ -4,16 +4,24 @@
 Regenerates `app/src/androidTest/assets/*.pcm` with the OpenAI TTS API
 (`POST /v1/audio/speech`).
 
+Each fixture can specify its own TTS voice and (optionally) `instructions`
+(a free-form style/delivery hint the `gpt-4o-mini-tts` model accepts), so
+e.g. the Japanese-pronunciation fixtures can ask for "katakana English"
+delivery while the original English fixtures keep using the plain
+alloy voice with no instructions (so their generated audio is unchanged).
+
 Requires Python 3 (stdlib only) and `ffmpeg` on PATH.
 """
 from __future__ import annotations
 
 import argparse
 import array
+import dataclasses
 import datetime
 import json
 import math
 import os
+import re
 import shutil
 import struct
 import subprocess
@@ -38,29 +46,79 @@ KEY_FILE = ROOT / ".tools/openai.key"
 SAMPLE_RATE = 16000
 TARGET_PEAK_DBFS = -3.0
 FORBIDDEN_WORDS = ("hello", "hey", "hi", "butler", "computer", "world")
+# Katakana forms of the same wake-related words, for the Japanese negative
+# fixtures (simple substring check; Japanese has no word-boundary regex
+# equivalent to \b, so this deliberately only checks these fixed strings).
+FORBIDDEN_WORDS_JA = ("ハロー", "バトラー", "バター")
 
-# name -> spoken text. The first four are the wake phrases the app listens
-# for; ordinary-speech is a neutral sentence that must not contain any of
-# them (word-boundary checked below) so it can be used as a negative case.
-FIXTURES = {
-    "hello-butler": "Hello Butler",
-    "hello-computer": "Hello Computer",
-    "hello-world": "Hello World",
-    "hey-butler": "Hey Butler",
-    "ordinary-speech": "Clouds are rolling in, so bring an umbrella this afternoon.",
+
+@dataclasses.dataclass(frozen=True)
+class Fixture:
+    text: str
+    voice: str = VOICE
+    instructions: str | None = None
+
+
+# name -> Fixture(text, voice, instructions). hello-butler, hello-computer,
+# hello-world, hey-butler and ordinary-speech are the original five and keep
+# their original voice (alloy) and no instructions, so regenerating them
+# produces the same audio as before. The rest are additions for the
+# Hello Butler / Japanese-pronunciation wake phrase work:
+#   - hello-butler-ja / hello-butler-ja-2: the Japanese pronunciation of
+#     "Hello Butler" ("ハロー、バトラー"), two different voices/instructions
+#     to cover more of the pronunciation variance a real speaker produces.
+#   - ordinary-speech-ja: a neutral Japanese sentence containing none of the
+#     wake words, for a Japanese negative case.
+#   - near-miss-ja: short Japanese phrases that come close to the wake
+#     phrase's sound (e.g. "バター" or "ハロー" alone) but must NOT trigger
+#     detection, for a stricter Japanese negative case.
+FIXTURES: dict[str, Fixture] = {
+    "hello-butler": Fixture("Hello Butler"),
+    "hello-computer": Fixture("Hello Computer"),
+    "hello-world": Fixture("Hello World"),
+    "hey-butler": Fixture("Hey Butler"),
+    "ordinary-speech": Fixture(
+        "Clouds are rolling in, so bring an umbrella this afternoon."
+    ),
+    # Voice/instructions chosen by generating several candidates (alloy,
+    # nova, onyx, echo, shimmer, ash, coral x with/without instructions)
+    # and comparing their Part-A-style ASR decode (see
+    # docs/device-validation.md, "Switching the wake phrase to Hello
+    # Butler with Japanese pronunciation"). gpt-4o-mini-tts output for the
+    # same voice/instructions is NOT deterministic across requests: repeat
+    # runs of the same (voice, instructions) sometimes decode "Butler" as
+    # a clean `▁BUT` token and sometimes as `▁BA ...` instead, and the
+    # "hello" shape also varies. alloy and nova, both with no instructions,
+    # were the most reliable at landing on a clean `▁BUT` across attempts;
+    # instructions did not measurably help. The currently checked-in audio
+    # for these two decodes as `▁HU D D LE ▁BUT U D A` (alloy) and
+    # `▁HU D D LE ▁BUT TER` (nova) — see docs/device-validation.md for the
+    # full set of candidates tried. Regenerating either fixture will very
+    # likely produce different (but hopefully still `▁BUT`-clean) audio;
+    # re-run scripts/check-fixtures.py after doing so.
+    "hello-butler-ja": Fixture("ハロー、バトラー", voice="alloy"),
+    "hello-butler-ja-2": Fixture("ハロー、バトラー", voice="nova"),
+    "ordinary-speech-ja": Fixture(
+        "今日は夕方から雨らしいから、洗濯物は早めに取り込んでおいてね。"
+    ),
+    "near-miss-ja": Fixture("バター取って"),
 }
 
 
 def check_ordinary_speech() -> None:
-    import re
-
-    text = FIXTURES["ordinary-speech"]
+    text = FIXTURES["ordinary-speech"].text
     pattern = re.compile(r"\b(" + "|".join(FORBIDDEN_WORDS) + r")\b", re.IGNORECASE)
     match = pattern.search(text)
     if match:
         raise SystemExit(
             f"ordinary-speech text contains forbidden word {match.group(0)!r}: {text!r}"
         )
+    text_ja = FIXTURES["ordinary-speech-ja"].text
+    for word in FORBIDDEN_WORDS_JA:
+        if word in text_ja:
+            raise SystemExit(
+                f"ordinary-speech-ja text contains forbidden word {word!r}: {text_ja!r}"
+            )
 
 
 def read_api_key() -> str:
@@ -77,15 +135,22 @@ def read_api_key() -> str:
     )
 
 
-def request_speech(api_key: str, model: str, voice: str, text: str) -> bytes:
-    payload = json.dumps(
-        {
-            "model": model,
-            "voice": voice,
-            "input": text,
-            "response_format": "wav",
-        }
-    ).encode("utf-8")
+def request_speech(
+    api_key: str,
+    model: str,
+    voice: str,
+    text: str,
+    instructions: str | None = None,
+) -> bytes:
+    body: dict[str, str] = {
+        "model": model,
+        "voice": voice,
+        "input": text,
+        "response_format": "wav",
+    }
+    if instructions:
+        body["instructions"] = instructions
+    payload = json.dumps(body).encode("utf-8")
     req = urllib.request.Request(
         API_URL,
         data=payload,
@@ -178,7 +243,10 @@ def measure(pcm_path: Path) -> tuple[int, float, float]:
     return len(data), duration, peak_dbfs
 
 
-def write_manifest(out_dir: Path, model: str, voice: str, names: list[str]) -> None:
+def write_manifest(out_dir: Path, model: str, all_names: list[str]) -> None:
+    """Regenerate the manifest for every fixture the FIXTURES dict knows
+    about (not just the ones generated in this invocation), so `--only`
+    runs don't drop rows for fixtures generated earlier."""
     manifest = out_dir / "FIXTURES.md"
     date = datetime.date.today().isoformat()
     lines = [
@@ -190,14 +258,16 @@ def write_manifest(out_dir: Path, model: str, voice: str, names: list[str]) -> N
         "",
         f"- Generator: `scripts/generate-fixtures.py`",
         f"- Model: `{model}`",
-        f"- Voice: `{voice}`",
         f"- Generated: {date}",
         "",
-        "| Fixture | Text |",
-        "| --- | --- |",
+        "| Fixture | Text | Voice | Instructions |",
+        "| --- | --- | --- | --- |",
     ]
-    for name in names:
-        lines.append(f"| `{name}.pcm` | {FIXTURES[name]} |")
+    for name in all_names:
+        if name not in FIXTURES:
+            continue
+        fx = FIXTURES[name]
+        lines.append(f"| `{name}.pcm` | {fx.text} | {fx.voice} | {fx.instructions or ''} |")
     lines.append("")
     manifest.write_text("\n".join(lines))
     print(f"wrote {manifest}")
@@ -206,12 +276,29 @@ def write_manifest(out_dir: Path, model: str, voice: str, names: list[str]) -> N
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", default=MODEL, help=f"OpenAI TTS model (default: {MODEL})")
-    parser.add_argument("--voice", default=VOICE, help=f"OpenAI TTS voice (default: {VOICE})")
+    parser.add_argument(
+        "--voice",
+        default=None,
+        help="Override the TTS voice for the fixture(s) generated (default: each "
+        "fixture's own voice in FIXTURES). Only meaningful with --only.",
+    )
+    parser.add_argument(
+        "--instructions",
+        default=None,
+        help="Override the TTS instructions for the fixture(s) generated (default: "
+        "each fixture's own instructions in FIXTURES). Only meaningful with --only.",
+    )
     parser.add_argument("--only", help="Generate only this fixture name (e.g. hey-butler)")
     parser.add_argument(
         "--out-dir",
         default=str(ROOT / "app/src/androidTest/assets"),
         help="Output directory for the .pcm files and FIXTURES.md",
+    )
+    parser.add_argument(
+        "--no-manifest",
+        action="store_true",
+        help="Skip writing FIXTURES.md (e.g. for one-off experimental fixtures written "
+        "outside the real assets directory).",
     )
     parser.add_argument(
         "--from-wav",
@@ -239,7 +326,9 @@ def main() -> None:
     import tempfile
 
     for name in names:
-        text = FIXTURES[name]
+        fx = FIXTURES[name]
+        voice = args.voice if args.voice is not None else fx.voice
+        instructions = args.instructions if args.instructions is not None else fx.instructions
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
             if args.from_wav:
@@ -247,8 +336,8 @@ def main() -> None:
                 if not wav_path.exists():
                     raise SystemExit(f"--from-wav: missing {wav_path}")
             else:
-                print(f"requesting speech for {name!r} ({args.model}/{args.voice}) ...")
-                audio_bytes = request_speech(api_key, args.model, args.voice, text)
+                print(f"requesting speech for {name!r} ({args.model}/{voice}, instructions={instructions!r}) ...")
+                audio_bytes = request_speech(api_key, args.model, voice, fx.text, instructions)
                 wav_path = tmp / f"{name}.wav"
                 wav_path.write_bytes(audio_bytes)
 
@@ -261,7 +350,8 @@ def main() -> None:
                 f"{name}.pcm: {size} bytes, {duration:.2f}s, peak={peak_dbfs:.1f} dBFS"
             )
 
-    write_manifest(out_dir, args.model, args.voice, names)
+    if not args.no_manifest:
+        write_manifest(out_dir, args.model, list(FIXTURES.keys()))
 
 
 if __name__ == "__main__":

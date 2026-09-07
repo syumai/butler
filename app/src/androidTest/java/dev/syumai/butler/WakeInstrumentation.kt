@@ -38,21 +38,36 @@ class WakeInstrumentation : Instrumentation() {
         try {
             val started = SystemClock.elapsedRealtime()
             if (tune) { tuneKeywords(); finish(Activity.RESULT_OK, Bundle()); return }
-            for ((phrase, fixture) in listOf(WakePhrase.HEY_BUTLER to "hey-butler.pcm", WakePhrase.HELLO_BUTLER to "hello-butler.pcm", WakePhrase.HELLO_COMPUTER to "hello-computer.pcm", WakePhrase.HELLO_WORLD to "hello-world.pcm")) {
+            // Negative fixtures that must never trigger any wake phrase: English ordinary
+            // speech, Japanese ordinary speech, and a short Japanese near-miss ("バター取って")
+            // chosen because the model hears a bare "▁BUT" in it.
+            val negatives = listOf("ordinary-speech.pcm", "ordinary-speech-ja.pcm", "near-miss-ja.pcm")
+            for ((phrase, fixture) in listOf(
+                WakePhrase.HEY_BUTLER to "hey-butler.pcm",
+                WakePhrase.HELLO_BUTLER to "hello-butler.pcm",
+                // Japanese pronunciation of "Hello Butler" ("ハロー、バトラー"), two TTS voices
+                // covering two different ways the model hears the Japanese-accented "hello".
+                WakePhrase.HELLO_BUTLER to "hello-butler-ja.pcm",
+                WakePhrase.HELLO_BUTLER to "hello-butler-ja-2.pcm",
+                WakePhrase.HELLO_COMPUTER to "hello-computer.pcm",
+                WakePhrase.HELLO_WORLD to "hello-world.pcm",
+            )) {
                 WakeModelStore().use { models ->
                     val first = models.acquire(targetContext, 0.25f, phrase)
-                    check(feed(first, fixture)) { "${phrase.name} was not detected" }
+                    check(feed(first, fixture)) { "${phrase.name} was not detected ($fixture)" }
                     models.discardAudio()
                     val second = models.acquire(targetContext, 0.25f, phrase)
                     check(first === second) { "Model was reloaded" }
                     repeat(20) { check(!second.accept(FloatArray(1600))) { "Audio leaked into next stream" } }
-                    check(!feed(second, "ordinary-speech.pcm")) { "Ordinary speech triggered ${phrase.name}" }
+                    for (negative in negatives) {
+                        check(!feed(second, negative)) { "$negative triggered ${phrase.name}" }
+                    }
                     second.restart()
                     check(feed(second, fixture)) { "Detection failed after restart" }
-                    sendStatus(0, Bundle().apply { putString("stream", "${phrase.name}: PASS\n") })
+                    sendStatus(0, Bundle().apply { putString("stream", "${phrase.name} ($fixture): PASS\n") })
                 }
             }
-            report.putString("stream", "\nPASS: four phrases, ordinary speech, silence, cached restart; native armeabi-v7a. ${SystemClock.elapsedRealtime()-started}ms\n")
+            report.putString("stream", "\nPASS: four phrases (six phrase/fixture pairs, including two Japanese-pronunciation Hello Butler fixtures), three negative fixtures (English + two Japanese), silence, cached restart; native armeabi-v7a. ${SystemClock.elapsedRealtime()-started}ms\n")
             report.putString("wake_test", "passed")
             finish(Activity.RESULT_OK, report)
         } catch (e: Throwable) {

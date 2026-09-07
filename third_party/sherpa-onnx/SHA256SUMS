@@ -1,7 +1,7 @@
 5a629a899888cb2760e245d9d5340858b15591aee7fa13644cf57199ff2829b9  app/libs/sherpa-onnx-1.12.14.aar
 f61ebd3eed3773a44d088d53dfae92dbb6aec4839f4dcaee2d402414741663a3  app/src/main/assets/wake/decoder.onnx
 1e721676515bcd42a186979733981213c66c80db680e1cc582dfedf3be76e678  app/src/main/assets/wake/encoder.onnx
-a53bf27b7df27f58f3bb2743eb46ea9e916a968c182b5f229fc418b747f809cf  app/src/main/assets/wake/hello-butler.txt
+af4f2edaa58696b76ee13eebf9f48dbe30815fd13cdae7f87108a93ed01175a5  app/src/main/assets/wake/hello-butler.txt
 fb4fdad351e7cbe36629aea6ce939f5836fbc8135a898fc8f2affb5f4539a264  app/src/main/assets/wake/hello-computer.txt
 09230bb9bbc7d9755997cdffe16f867602d051b54284cc0cedace849cc0f2d2d  app/src/main/assets/wake/hey-butler.txt
 eae9da0c7e1e6c6a3f4cc42d167899c388f6c6701b94cb96320e4f55df79624c  app/src/main/assets/wake/joiner.onnx

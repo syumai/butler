@@ -32,9 +32,13 @@ SAMPLE_RATE = 16000
 FIXTURE_NAMES = [
     "hey-butler.pcm",
     "hello-butler.pcm",
+    "hello-butler-ja.pcm",
+    "hello-butler-ja-2.pcm",
     "hello-computer.pcm",
     "hello-world.pcm",
     "ordinary-speech.pcm",
+    "ordinary-speech-ja.pcm",
+    "near-miss-ja.pcm",
 ]
 
 # Phrase file -> (keywords_score, keywords_threshold), matching the
@@ -47,13 +51,32 @@ PHRASE_FILES = [
     ("keywords.txt", 1.5, 0.25),
 ]
 
-EXPECTED_HIT = {
-    "hey-butler.txt": "hey-butler.pcm",
-    "hello-butler.txt": "hello-butler.pcm",
-    "hello-computer.txt": "hello-computer.pcm",
-    "keywords.txt": "hello-world.pcm",
+# Phrase file -> fixtures it must detect (all of them) for a PASS.
+EXPECTED_HITS: dict[str, list[str]] = {
+    "hey-butler.txt": ["hey-butler.pcm"],
+    "hello-butler.txt": ["hello-butler.pcm", "hello-butler-ja.pcm", "hello-butler-ja-2.pcm"],
+    "hello-computer.txt": ["hello-computer.pcm"],
+    "keywords.txt": ["hello-world.pcm"],
 }
-NEGATIVE_FIXTURE = "ordinary-speech.pcm"
+
+# Fixtures every phrase file must NOT detect; a hit here is a hard FAIL.
+MANDATORY_NEGATIVES = ["ordinary-speech.pcm"]
+
+# Fixtures hello-butler.txt must also not detect (its own, stricter
+# negative set per the Hello Butler / Japanese-pronunciation tuning work).
+# For the *other* phrase files, a hit on these is a WARN only, not a FAIL,
+# since they were not tuned against these new Japanese fixtures.
+HELLO_BUTLER_EXTRA_NEGATIVES = ["ordinary-speech-ja.pcm", "near-miss-ja.pcm"]
+WARN_ONLY_NEGATIVES: dict[str, list[str]] = {
+    "hey-butler.txt": HELLO_BUTLER_EXTRA_NEGATIVES,
+    "hello-butler.txt": [],  # these are mandatory (hard FAIL) for hello-butler.txt, handled below.
+    "hello-computer.txt": HELLO_BUTLER_EXTRA_NEGATIVES,
+    "keywords.txt": HELLO_BUTLER_EXTRA_NEGATIVES,
+}
+# hello-butler.txt must not hit its extra negatives either, as a hard FAIL.
+MANDATORY_NEGATIVES_BY_PHRASE: dict[str, list[str]] = {
+    "hello-butler.txt": MANDATORY_NEGATIVES + HELLO_BUTLER_EXTRA_NEGATIVES,
+}
 
 
 def to_bpe_token(tok: str) -> str:
@@ -165,15 +188,27 @@ def report_pass_fail(matrix: dict[str, dict[str, bool]]) -> bool:
     overall = True
     for phrase_file, _, _ in PHRASE_FILES:
         row = matrix[phrase_file]
-        expected_fixture = EXPECTED_HIT[phrase_file]
-        own_hit = row.get(expected_fixture, False)
-        neg_hit = row.get(NEGATIVE_FIXTURE, False)
-        ok = own_hit and not neg_hit
+        expected_fixtures = EXPECTED_HITS[phrase_file]
+        mandatory_negatives = MANDATORY_NEGATIVES_BY_PHRASE.get(phrase_file, MANDATORY_NEGATIVES)
+        warn_negatives = WARN_ONLY_NEGATIVES.get(phrase_file, [])
+
+        positive_hits = {name: row.get(name, False) for name in expected_fixtures}
+        negative_hits = {name: row.get(name, False) for name in mandatory_negatives}
+        all_positive = all(positive_hits.values())
+        no_negative = not any(negative_hits.values())
+        ok = all_positive and no_negative
         overall = overall and ok
+
         status = "PASS" if ok else "FAIL"
-        print(f"{status}: {phrase_file} -> {expected_fixture}: own_hit={own_hit}, ordinary_speech_hit={neg_hit}")
+        pos_str = ", ".join(f"{n}={h}" for n, h in positive_hits.items())
+        neg_str = ", ".join(f"{n}={h}" for n, h in negative_hits.items())
+        print(f"{status}: {phrase_file} -> positives: [{pos_str}] negatives: [{neg_str}]")
+
+        tracked = set(expected_fixtures) | set(mandatory_negatives) | set(warn_negatives)
         for name, hit in row.items():
-            if hit and name not in (expected_fixture, NEGATIVE_FIXTURE):
+            if hit and name in warn_negatives:
+                print(f"  WARN: {phrase_file} also hit {name} (new Japanese negative, not tuned against this phrase file, not a failure)")
+            elif hit and name not in tracked:
                 print(f"  WARN: {phrase_file} also hit {name} (cross-phrase hit, not a failure)")
     print()
     print("OVERALL: " + ("PASS" if overall else "FAIL"))

@@ -33,9 +33,12 @@ class Settings(context: Context) {
     var weatherBackground: Boolean
         get() = prefs.getBoolean("weatherBackground", false)
         set(value) { prefs.edit().putBoolean("weatherBackground", value).apply() }
-    // Wake phrase selection is not exposed to the user yet; fixed to Hey Butler. The enum and the other
-    // phrase assets are kept for the instrumentation tests.
-    val wakePhrase get() = WakePhrase.HEY_BUTLER
+    // Wake phrase selection is not exposed to the user yet; fixed to Hello Butler. Hey Butler
+    // caused too many false wakes (its short "HEY BUT" token sequences at a low threshold matched
+    // ordinary speech too easily); Hello Butler is a longer phrase, and its phrase file also covers
+    // the Japanese pronunciation ("ハロー、バトラー"), not just the English one. The enum and the
+    // other phrase assets are kept for the instrumentation tests.
+    val wakePhrase get() = WakePhrase.HELLO_BUTLER
     val timeoutSeconds get() = get("timeout", "30").toLongOrNull()?.coerceIn(5, 600) ?: 30L
     val voice get() = Voice.fromId(get("voice"))
     fun setVoice(value: Voice) = set("voice", value.id)

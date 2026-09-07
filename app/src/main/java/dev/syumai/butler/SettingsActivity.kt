@@ -256,7 +256,7 @@ class SettingsActivity : Activity() {
 
     private fun renderWake() {
         addSwitchRow(rightPane, getString(R.string.settings_row_wake_enabled), settings.enabled) { checked -> settings.enabled = checked; applyServiceState(); renderCategory(selected) }
-        addRow(rightPane, getString(R.string.settings_row_wake_phrase), "Hey Butler", enabled = false)
+        addRow(rightPane, getString(R.string.settings_row_wake_phrase), settings.wakePhrase.label, enabled = false)
         addRow(rightPane, getString(R.string.settings_row_wake_threshold), settings.get("wakeThreshold", "0.25")) {
             showEditDialog(getString(R.string.settings_row_wake_threshold), settings.get("wakeThreshold", "0.25"), secret = false,
                 inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL,
