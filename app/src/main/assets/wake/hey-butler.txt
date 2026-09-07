@@ -1,6 +1,5 @@
 ▁HE Y ▁BUT LE R @Hey_Butler
 ▁HE Y ▁BUT L ER @Hey_Butler
-▁HE Y ▁BU G G LE R @Hey_Butler
 ▁HE Y ▁BUT ▁THE :1.5 #0.25 @Hey_Butler
 ▁HE Y ▁BUT ▁THE :3.0 #0.1 @Hey_Butler
 ▁HE Y ▁BUT :3.0 #0.1 @Hey_Butler

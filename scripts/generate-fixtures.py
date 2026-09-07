@@ -112,19 +112,29 @@ def ffmpeg_path() -> str:
 
 def trim_resample_to_pcm(ffmpeg: str, wav_path: Path, pcm_path: Path) -> None:
     """Trim leading/trailing silence (keeping ~100ms padding), resample to
-    16kHz mono, and write raw s16le PCM."""
-    silenceremove = (
-        "silenceremove="
-        "start_periods=1:start_threshold=-40dB:start_silence=0.1:"
-        "stop_periods=1:stop_threshold=-40dB:stop_silence=0.1"
-    )
+    16kHz mono, and write raw s16le PCM.
+
+    Trims leading silence, then reverses the audio and trims what is now
+    leading silence (i.e. the original trailing silence), then reverses
+    back. This avoids ffmpeg's `silenceremove` "stop" mode, which is a
+    streaming detector: with `stop_periods=1` it commits to the *first*
+    silence gap of qualifying length/threshold as if it were the trailing
+    silence and drops everything from there on. A short mid-phrase pause
+    (e.g. between "Hey" and "Butler") can trigger that at -40dB/100ms just
+    as easily as genuine trailing silence, truncating real speech.
+    Symmetric start-trimming (used twice, via reversal) only ever removes
+    a single leading run of silence on each pass, so it can't fall into
+    that trap.
+    """
+    start_trim = "silenceremove=start_periods=1:start_threshold=-40dB:start_silence=0.1"
+    filt = f"{start_trim},areverse,{start_trim},areverse"
     subprocess.run(
         [
             ffmpeg,
             "-y",
             "-loglevel", "error",
             "-i", str(wav_path),
-            "-af", silenceremove,
+            "-af", filt,
             "-ar", str(SAMPLE_RATE),
             "-ac", "1",
             "-f", "s16le",
