@@ -13,6 +13,7 @@ import android.graphics.Shader
 import android.os.SystemClock
 import android.view.View
 import java.io.File
+import java.util.Calendar
 import kotlin.math.sin
 import kotlin.random.Random
 
@@ -25,7 +26,9 @@ private const val RAIN_SLANT = -0.12f
  *  animated scene. Animation runs only while the view is attached, its window is visible, and the current
  *  scene has motion (anything but DEFAULT/CLEAR_DAY, see [updateAnimating]) — capped at ~25 fps via
  *  `postInvalidateDelayed(40)` from onDraw and timed off `SystemClock.uptimeMillis()`, which is cheap
- *  enough for the target device (960x480, 32-bit ARM, weak CPU). */
+ *  enough for the target device (960x480, 32-bit ARM, weak CPU). The default illustration's
+ *  palette (sky/sun/ridge colors only — geometry is unchanged) follows the time of day via [DayPalette]
+ *  and [minuteOfDay]; the weather-scene and imported-photo paths are unaffected. */
 internal class Landscape(context: Context, file: File, private val settings: Settings) : View(context) {
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     // Used only for the per-frame weather-scene draws (drawScene): no anti-aliasing, since those circles/
@@ -46,6 +49,11 @@ internal class Landscape(context: Context, file: File, private val settings: Set
     // weather-background setting, to check individual scenes on-device (see docs/device-validation.md).
     var debugForceWeather = false
         set(value) { field = value; updateAnimating() }
+    // Drives only the default illustration's time-of-day palette (see DayPalette); the weather-scene and
+    // imported-photo paths never read it. MainActivity's tick pushes the current minute once a minute, so
+    // the occasional extra invalidate() is negligible.
+    var minuteOfDay: Int = Calendar.getInstance().let { it.get(Calendar.HOUR_OF_DAY) * 60 + it.get(Calendar.MINUTE) }
+        set(value) { if (field != value) { field = value; invalidate() } }
     private var art: SceneArt? = null
     private var attachedToWindow = false
     private var windowVisible = false
@@ -72,17 +80,18 @@ internal class Landscape(context: Context, file: File, private val settings: Set
             val scale = maxOf(w / it.width, h / it.height); val bw = it.width * scale; val bh = it.height * scale
             canvas.drawBitmap(it, null, RectF((w-bw)/2, (h-bh)/2, (w+bw)/2, (h+bh)/2), paint); return
         }
-        paint.shader = LinearGradient(0f, 0f, w, h, intArrayOf(0xFF254C50.toInt(), 0xFF81988D.toInt(), 0xFFE7BF8D.toInt()), null, Shader.TileMode.CLAMP)
+        val palette = DayPalette.at(minuteOfDay)
+        paint.shader = LinearGradient(0f, 0f, w, h, palette.sky, null, Shader.TileMode.CLAMP)
         canvas.drawRect(0f, 0f, w, h, paint); paint.shader = null
-        paint.color = 0xFFE7D7A9.toInt(); canvas.drawCircle(w*.78f, h*.28f, h*.105f, paint)
+        paint.color = palette.sun; canvas.drawCircle(w*.78f, h*.28f, h*.105f, paint)
         fun ridge(color: Int, base: Float, peak: Float, shift: Float) {
             paint.color = color
             val p = Path().apply { moveTo(0f, h*base); cubicTo(w*.25f, h*(base-.12f), w*(.42f+shift), h*peak, w*.67f, h*(base-.08f)); cubicTo(w*.84f, h*(base+.1f), w*.9f, h*(peak+.1f), w, h*base); lineTo(w,h); lineTo(0f,h); close() }
             canvas.drawPath(p, paint)
         }
-        ridge(0xFF78918A.toInt(), .65f, .24f, .1f)
-        ridge(0xFF446B68.toInt(), .8f, .5f, -.15f)
-        ridge(0xFF1A4247.toInt(), 1f, .56f, .2f)
+        ridge(palette.ridges[0], .65f, .24f, .1f)
+        ridge(palette.ridges[1], .8f, .5f, -.15f)
+        ridge(palette.ridges[2], 1f, .56f, .2f)
     }
     // Weather scenes are code-drawn. SceneArt holds the deterministic base geometry (rebuilt only when the
     // scene or view size changes), a cached bitmap of the parts that never move (sky, sun/moon, ridges —

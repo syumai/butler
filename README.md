@@ -47,7 +47,7 @@ Wake word detection is entirely self-contained via the bundled sherpa-onnx model
 
 ## Current features and limitations
 
-- Kotlin / native Views. Original landscape illustration background, clock, and support for importing an arbitrary image.
+- Kotlin / native Views. Original landscape illustration background, clock, and support for importing an arbitrary image. The illustration's colors follow the time of day (night → dawn → morning → noon → evening → night), interpolated smoothly and updated once a minute from the device's local clock; the imported photo and the weather-linked scenes are unaffected.
 - A dedicated, category-based settings screen (`SettingsActivity`), styled like the Android Settings app, replacing the previous settings dialog. Categories: Conversation (API key, models, assistant voice, silence timeout), Wake (standby toggle, wake phrase display, detection threshold), Weather & background, Integrations (Home Assistant and MCP), and About (app info and third-party notices). Every change is saved immediately, as in Android's own Settings app.
 - Wake phrase detection via sherpa-onnx 1.12.14 + the GigaSpeech 3.3M KWS model. The phrase is currently fixed to "Hey Butler" (selection UI removed for now); the detection threshold remains configurable. A short synthesized chime plays immediately on wake detection, before the conversation connects.
 - WebRTC voice conversation, locale-aware instructions (English by default, Japanese when the device language is Japanese), semantic VAD, interruption support, a selectable output voice (10 OpenAI Realtime voices; marin is the default), and a configurable silence timeout.

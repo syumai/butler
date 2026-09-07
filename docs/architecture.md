@@ -61,6 +61,8 @@ Weather scenes now animate (clear-day stays static): rain and snow fall, clouds 
 
 A debug-only override (`BuildConfig.DEBUG` gated) lets `adb shell setprop debug.butler.scene <SCENE>` force a specific scene — and force the weather background on — for on-device checks without needing matching live weather; see [Device validation](docs/device-validation.md).
 
+The default illustration's colors (only colors — sun position/radius, ridge paths, gradient direction and paint/AA settings are unchanged) follow the time of day: night → dawn → morning → noon → evening → night, interpolating smoothly rather than jumping between scenes. `DayPalette` (`app/src/main/java/dev/syumai/butler/DayPalette.kt`) is pure Kotlin with no `android.*` imports, so it is unit-tested on the JVM (`DayPaletteTest.kt`): a small list of (minute-of-day, palette) keyframes — anchored to the `CLEAR_NIGHT` and `CLEAR_DAY` scene colors above at midnight/noon, and to the original hard-coded illustration colors at 18:00 as the evening keyframe, so the existing sunset look is preserved — with `DayPalette.at(minuteOfDay)` linearly interpolating each ARGB channel between the two neighbouring keyframes, wrapping across midnight. `MainActivity`'s `tick` runnable (every 250ms while visible) converts the current time into a minute-of-day and assigns it to `Landscape.minuteOfDay`; the setter only calls `invalidate()` when the minute actually changes, so this costs nothing beyond one comparison on most ticks. A debug-only override alongside `debug.butler.scene` — `adb shell setprop debug.butler.minute <0..1439>` — forces the minute used for the palette, read each tick via a cheap `SystemProperties.get` call.
+
 Configurable items:
 
 - OpenAI API key, voice model, and voice.

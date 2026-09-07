@@ -46,6 +46,9 @@ class MainActivity : Activity() {
     private val clockFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
     private val dateFormat = SimpleDateFormat(
         android.text.format.DateFormat.getBestDateTimePattern(Locale.getDefault(), "EEEEMMMMd"), Locale.getDefault())
+    // Reused instead of Calendar.getInstance() every tick, just to convert `now` into hour/minute for the
+    // default illustration's time-of-day palette (Landscape.minuteOfDay).
+    private val cal = Calendar.getInstance()
     private val tick = object : Runnable {
         override fun run() {
             if (!visible) return
@@ -56,6 +59,8 @@ class MainActivity : Activity() {
             transcript.updateText(AssistantService.transcript)
             approve.visibility = if (AssistantService.approval != null) View.VISIBLE else View.GONE
             end.visibility = if (AssistantService.conversing) View.VISIBLE else View.GONE
+            cal.time = now
+            landscape.minuteOfDay = debugMinuteOverride() ?: (cal.get(Calendar.HOUR_OF_DAY) * 60 + cal.get(Calendar.MINUTE))
             if (SystemClock.elapsedRealtime() - weatherAt > 900_000 || weatherAt == 0L) refreshWeather()
             main.postDelayed(this, 250)
         }
@@ -203,6 +208,13 @@ class MainActivity : Activity() {
     private fun debugSceneOverride(): WeatherScene? = if (!BuildConfig.DEBUG) null else runCatching {
         val prop = Class.forName("android.os.SystemProperties").getMethod("get", String::class.java).invoke(null, "debug.butler.scene") as String
         WeatherScene.entries.firstOrNull { it.name == prop }
+    }.getOrNull()
+    // Debug-only: `adb shell setprop debug.butler.minute <0..1439>` forces the minute used for the default
+    // illustration's DayPalette, to check the time-of-day gradient on-device without waiting for the clock
+    // (see docs/device-validation.md). Read every tick since SystemProperties.get is a cheap native call.
+    private fun debugMinuteOverride(): Int? = if (!BuildConfig.DEBUG) null else runCatching {
+        val prop = Class.forName("android.os.SystemProperties").getMethod("get", String::class.java).invoke(null, "debug.butler.minute") as String
+        prop.toIntOrNull()
     }.getOrNull()
     /** Mirrors the sky-text mapping used by [WeatherScene.of]. */
     private fun skyLabelRes(code: Int): Int = when (code) {
