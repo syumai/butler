@@ -17,4 +17,40 @@ class IdlePolicyTest {
         policy.update(4_999, false)
         assertTrue(policy.expired(5_010))
     }
+
+    @Test fun armShortExpiresAfterShortTimeout() {
+        val policy = IdlePolicy(30_000, 5_000)
+        policy.armShort()
+        policy.update(0, false)
+        assertFalse(policy.expired(4_900))
+        assertTrue(policy.expired(5_000))
+    }
+
+    @Test fun armShortSurvivesTheAssistantsOwnBusyUpdate() {
+        val policy = IdlePolicy(30_000, 5_000)
+        policy.armShort()
+        policy.update(0, false)
+        policy.update(1_000, true) // the assistant's own follow-up response (response.created) marks busy
+        policy.update(1_000, false) // then goes idle again once playback finishes
+        assertFalse(policy.expired(1_000 + 4_999))
+        assertTrue(policy.expired(1_000 + 5_000))
+    }
+
+    @Test fun disarmShortRestoresTheNormalTimeout() {
+        val policy = IdlePolicy(30_000, 5_000)
+        policy.armShort()
+        policy.disarmShort()
+        policy.update(0, false)
+        assertFalse(policy.expired(5_000))
+        assertFalse(policy.expired(29_999))
+        assertTrue(policy.expired(30_000))
+    }
+
+    @Test fun defaultConstructionArmShortBehavesExactlyLikeBefore() {
+        val policy = IdlePolicy(30_000)
+        policy.armShort() // no shortTimeoutMs given, so this must not change anything
+        policy.update(0, false)
+        assertFalse(policy.expired(29_999))
+        assertTrue(policy.expired(30_000))
+    }
 }
