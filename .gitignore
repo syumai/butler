@@ -12,3 +12,8 @@ app/src/main/assets/wake/*.onnx
 
 # Local logo studies
 docs/assets/variants/
+
+# Project skills live in .claude/skills; re-include them even if a global gitignore hides .claude
+!.claude/
+.claude/*
+!.claude/skills/

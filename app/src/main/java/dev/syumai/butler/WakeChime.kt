@@ -9,7 +9,9 @@ import kotlin.concurrent.thread
 import kotlin.math.sin
 import kotlin.math.PI
 
-/** Short ascending two-note chime played on wake word detection, for immediate feedback. Synthesized in code; no asset file. */
+/** Short ascending two-note chime played once the conversation's WebRTC session is ready and the microphone has
+ * just been enabled, so the user's first words after the chime are actually captured. Synthesized in code; no
+ * asset file. */
 object WakeChime {
     private const val SAMPLE_RATE = 48000
     @Volatile var lastPlaybackFrames = 0; private set

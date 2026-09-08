@@ -53,16 +53,24 @@ should not be committed to git.
 from __future__ import annotations
 
 import argparse
-import array
 from pathlib import Path
 
 import sherpa_onnx
 
+import wakelib
+from wakelib import (
+    FIXTURES_DIR,
+    WAKE_ASSETS_DIR,
+    collect_hits,
+    load_pcm_as_float,
+    merge_hits,
+    pad,
+    to_bpe_token,
+)
+
 ROOT = Path(__file__).resolve().parents[1]
 UPSTREAM_MODEL_DIR = ROOT / ".tools/sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01"
-WAKE_ASSETS_DIR = ROOT / "app/src/main/assets/wake"
-FIXTURES_DIR = ROOT / "app/src/androidTest/assets"
-SAMPLE_RATE = 16000
+SAMPLE_RATE = wakelib.SAMPLE_RATE
 
 # Global defaults: the WakePhrase default keywords_score and the settings
 # default wakeThreshold, matching how the app actually runs (as opposed to
@@ -85,30 +93,7 @@ FIXTURE_NAMES = [
 ]
 
 UTTERANCE_GAP_SECONDS = 1.5
-MERGE_HIT_SECONDS = 2.0
-
-
-def to_bpe_token(tok: str) -> str:
-    """See check-fixtures.py: sherpa_onnx returns '▁' as a literal leading
-    space; convert it back so the printed sequence is directly comparable to
-    phrase-file lines."""
-    if tok.startswith(" "):
-        return "▁" + tok[1:]
-    return tok
-
-
-def load_pcm_as_float(path: Path) -> array.array:
-    data = path.read_bytes()
-    shorts = array.array("h")
-    shorts.frombytes(data[: len(data) - (len(data) % 2)])
-    return array.array("f", (s / 32768.0 for s in shorts))
-
-
-def pad(samples: array.array, leading: int, trailing: int) -> array.array:
-    out = array.array("f", [0.0] * leading)
-    out.extend(samples)
-    out.extend([0.0] * trailing)
-    return out
+MERGE_HIT_SECONDS = wakelib.MERGE_HIT_SECONDS
 
 
 def run_part_a(positive_path: Path) -> None:
@@ -153,45 +138,7 @@ def run_part_a(positive_path: Path) -> None:
 
 
 def run_keyword_spotter(phrase_file: Path) -> sherpa_onnx.KeywordSpotter:
-    return sherpa_onnx.KeywordSpotter(
-        tokens=str(WAKE_ASSETS_DIR / "tokens.txt"),
-        encoder=str(WAKE_ASSETS_DIR / "encoder.onnx"),
-        decoder=str(WAKE_ASSETS_DIR / "decoder.onnx"),
-        joiner=str(WAKE_ASSETS_DIR / "joiner.onnx"),
-        keywords_file=str(phrase_file),
-        num_threads=1,
-        sample_rate=SAMPLE_RATE,
-        keywords_score=KEYWORDS_SCORE,
-        keywords_threshold=KEYWORDS_THRESHOLD,
-    )
-
-
-def collect_hits(spotter: sherpa_onnx.KeywordSpotter, samples: array.array) -> list[float]:
-    """Feed `samples` in 1600-sample chunks (matching WakeInstrumentation's
-    feed() and check-fixtures.py) and return the time (in seconds from the
-    start of `samples`) of every KeywordSpotter hit."""
-    stream = spotter.create_stream()
-    hits: list[float] = []
-    for offset in range(0, len(samples), 1600):
-        chunk = samples[offset : offset + 1600]
-        stream.accept_waveform(SAMPLE_RATE, chunk)
-        while spotter.is_ready(stream):
-            spotter.decode_stream(stream)
-            if spotter.get_result(stream).strip():
-                hits.append((offset + len(chunk)) / SAMPLE_RATE)
-                spotter.reset_stream(stream)
-    return hits
-
-
-def merge_hits(hits: list[float], gap: float) -> list[float]:
-    """Collapse hits within `gap` seconds of the previous hit into a single
-    distinct-utterance hit, keeping the first hit's timestamp."""
-    merged: list[float] = []
-    for hit in hits:
-        if merged and hit - merged[-1] < gap:
-            continue
-        merged.append(hit)
-    return merged
+    return wakelib.create_keyword_spotter(phrase_file, KEYWORDS_SCORE, KEYWORDS_THRESHOLD)
 
 
 def run_part_b(phrase_file: Path, positive_path: Path, negative_paths: list[Path]) -> None:

@@ -34,6 +34,8 @@ Picovoice was rejected because its registration requirements do not fit. sherpa-
 
 `WakeDecoder` performs only keyword detection from audio samples and has no dependency on the network or credentials. `LocalWakeWordEngine` performs 16kHz microphone capture and inference on a dedicated thread, and on stop it releases the microphone and audio stream before invoking the callback. Only the model weights are kept and reused within the service, and released when the service ends. The service starts WebRTC only after that release completes. Audio used for detection is neither retained nor sent.
 
+`WakeChime` plays a short synthesized chime, but not on detection itself: `AssistantService` defers it until the following conversation's `session.updated` event reports the session ready, right after `enableMicrophone()`. Playing it earlier, on the `detected` callback, let users start talking during the several seconds the WebRTC connection takes to come up, and that speech was lost because the microphone was not yet enabled.
+
 The detection threshold is configurable. The English keyword and Japanese conversation are handled separately, and detection quality of "Hello World" by Japanese speakers will be measured on the device. The old Picovoice key and custom model are removed when settings are reset.
 
 ## Tools and MCP

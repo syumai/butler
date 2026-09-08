@@ -33,6 +33,7 @@ class AssistantService : Service() {
     private var generation = 0
     private var wakeGeneration = 0
     private var state = ConversationState()
+    private var chimeOnReady = false
     private var startedAt = 0L
     private var busySince = 0L
     private var idle = IdlePolicy(30_000)
@@ -95,7 +96,7 @@ class AssistantService : Service() {
             val id = wakeGeneration
             wake = LocalWakeWordEngine(this, wakeModels, settings.get("wakeThreshold", "0.25").toFloatOrNull()?.coerceIn(0.05f, 0.9f) ?: 0.25f, settings.wakePhrase,
                 ready = { if (id == wakeGeneration) status = message ?: Status(R.string.status_say_wake_phrase, settings.wakePhrase.label) },
-                detected = { if (id == wakeGeneration) { wake = null; WakeChime.play(this); begin(woken = true) } },
+                detected = { if (id == wakeGeneration) { wake = null; begin(woken = true) } },
                 failed = { if (id == wakeGeneration) { wake = null; status = Status(R.string.status_wake_detect_failed) } })
             wake!!.start()
         }
@@ -114,6 +115,7 @@ class AssistantService : Service() {
             conversing = true
             generation++; transcript = ""; citations = ""; approval = null
             state = ConversationState()
+            chimeOnReady = woken
             handled.clear(); startedAt = SystemClock.elapsedRealtime(); busySince = 0
             idle = IdlePolicy(settings.timeoutSeconds * 1000, POST_ACTION_IDLE_MS); client = ToolClient(); registry = ToolRegistry(this, settings, client)
             status = Status(R.string.status_connecting)
@@ -129,7 +131,11 @@ class AssistantService : Service() {
     private fun onEvent(e: JSONObject) {
         when (e.optString("type")) {
             "session.created" -> realtime?.send(JSONObject().put("type", "session.update").put("session", JSONObject().put("type", "realtime").put("tools", registry.definitions())))
-            "session.updated" -> if (state.sessionReady()) { realtime?.enableMicrophone(); status = Status(R.string.status_please_speak) }
+            "session.updated" -> if (state.sessionReady()) {
+                realtime?.enableMicrophone()
+                if (chimeOnReady) { chimeOnReady = false; WakeChime.play(this) }
+                status = Status(R.string.status_please_speak)
+            }
             "input_audio_buffer.speech_started" -> if (state.speechStarted()) {
                 status = Status(R.string.status_listening); idle.update(SystemClock.elapsedRealtime(), true); idle.disarmShort()
             }
@@ -223,7 +229,7 @@ class AssistantService : Service() {
     }
     private fun finish(message: Status? = null) {
         generation++; preparing = false; conversing = false; client.cancel(); realtime?.close(); realtime = null
-        transcript = ""; citations = ""; approval = null
+        transcript = ""; citations = ""; approval = null; chimeOnReady = false
         waitForWake(message)
     }
     override fun onDestroy() {
@@ -233,7 +239,7 @@ class AssistantService : Service() {
         val releaseModel = { kotlin.concurrent.thread(name = "Butler-release-model") { wakeModels.close() }; Unit }
         if (oldWake != null) oldWake.stop(releaseModel) else releaseModel()
         worker.shutdownNow(); wakeLock?.let { if (it.isHeld) it.release() }
-        transcript = ""; citations = ""; approval = null; status = Status(R.string.status_mic_stopped)
+        transcript = ""; citations = ""; approval = null; chimeOnReady = false; status = Status(R.string.status_mic_stopped)
         super.onDestroy()
     }
 }
