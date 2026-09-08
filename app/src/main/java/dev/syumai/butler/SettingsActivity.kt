@@ -28,6 +28,8 @@ import android.widget.ScrollView
 import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
+import org.json.JSONArray
+import org.json.JSONObject
 import java.io.File
 
 /**
@@ -40,6 +42,7 @@ import java.io.File
  */
 class SettingsActivity : Activity() {
     private lateinit var settings: Settings
+    private val client = ToolClient()
     private val categories = listOf(
         R.string.settings_category_conversation, R.string.settings_category_wake,
         R.string.settings_category_weather_background, R.string.settings_category_integration, R.string.settings_category_info)
@@ -48,6 +51,25 @@ class SettingsActivity : Activity() {
     private lateinit var rightPane: LinearLayout
     private val accent = Color.parseColor("#D9C6A5")
     private val textColor = Color.rgb(245, 239, 227)
+    private val dimStroke = Color.argb(89, 255, 255, 255) // ~35% white
+    private val dimText = Color.argb(191, 245, 239, 227) // ~75% of textColor
+    private val mutedRed = Color.parseColor("#B85C5C")
+    private val chipDarkText = Color.parseColor("#102326")
+    private val deviceKindStrings = mapOf(
+        "light" to R.string.device_kind_light, "switch" to R.string.device_kind_switch, "climate" to R.string.device_kind_climate,
+        "fan" to R.string.device_kind_fan, "cover" to R.string.device_kind_cover, "lock" to R.string.device_kind_lock,
+        "media_player" to R.string.device_kind_media_player, "humidifier" to R.string.device_kind_humidifier,
+        "vacuum" to R.string.device_kind_vacuum, "scene" to R.string.device_kind_scene, "script" to R.string.device_kind_script,
+        "input_boolean" to R.string.device_kind_input_boolean,
+    )
+    private val deviceStateStrings = mapOf(
+        "cool" to R.string.device_state_cool, "heat" to R.string.device_state_heat, "dry" to R.string.device_state_dry,
+        "fan_only" to R.string.device_state_fan_only, "auto" to R.string.device_state_auto, "heat_cool" to R.string.device_state_heat_cool,
+        "open" to R.string.device_state_open, "closed" to R.string.device_state_closed, "opening" to R.string.device_state_opening,
+        "closing" to R.string.device_state_closing, "locked" to R.string.device_state_locked, "unlocked" to R.string.device_state_unlocked,
+        "playing" to R.string.device_state_playing, "paused" to R.string.device_state_paused, "idle" to R.string.device_state_idle,
+        "standby" to R.string.device_state_standby, "unavailable" to R.string.device_state_unavailable, "unknown" to R.string.device_state_unknown,
+    )
 
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
@@ -204,6 +226,97 @@ class SettingsActivity : Activity() {
         dialog.show()
     }
 
+    private fun kindLabel(type: String): String = deviceKindStrings[type]?.let { getString(it) } ?: type
+
+    /** Formats a temperature-like number without a trailing ".0" (e.g. 24.0 -> "24", 24.5 -> "24.5"), or null when [value] is NaN. */
+    private fun formatTemp(value: Double): String? {
+        if (value.isNaN()) return null
+        return if (value == Math.floor(value)) value.toLong().toString() else value.toString()
+    }
+
+    /** Localized state label for a device chip, with current/target temperature appended for climate entities. */
+    private fun stateLabel(type: String, state: String, attributes: JSONObject?): String {
+        val key = deviceStateKey(type, state)
+        var label = when (key) {
+            "on" -> getString(if (type == "light") R.string.device_state_light_on else R.string.device_state_on)
+            "off" -> getString(if (type == "light") R.string.device_state_light_off else R.string.device_state_off)
+            "raw" -> state
+            else -> deviceStateStrings[key]?.let { getString(it) } ?: state
+        }
+        if (type == "climate" && attributes != null) {
+            formatTemp(attributes.optDouble("current_temperature", Double.NaN))?.let { label += " · " + getString(R.string.device_state_current_temp, it) }
+            formatTemp(attributes.optDouble("temperature", Double.NaN))?.let { label += " · " + getString(R.string.device_state_target_temp, it) }
+        }
+        return label
+    }
+
+    /** A small rounded-pill TextView: filled with [fill] when given, otherwise outlined with [stroke]. */
+    private fun chip(label: String, contentColor: Int, fill: Int? = null, stroke: Int = dimStroke) = TextView(this).apply {
+        text = label; textSize = 11f; setTextColor(contentColor)
+        setPadding(dp(8), dp(3), dp(8), dp(3))
+        background = GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE; cornerRadius = dp(10).toFloat()
+            if (fill != null) setColor(fill) else { setColor(Color.TRANSPARENT); setStroke(dp(1).coerceAtLeast(1), stroke) }
+        }
+    }
+
+    private fun deviceRow(device: JSONObject): LinearLayout {
+        val type = device.optString("type"); val state = device.optString("state"); val attributes = device.optJSONObject("attributes")
+        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(6), 0, dp(6)) }
+        row.addView(chip(kindLabel(type), textColor))
+        val nameColumn = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(8), 0, dp(8), 0) }
+        nameColumn.addView(text(15f, device.optString("name")).apply { setTypeface(typeface, android.graphics.Typeface.BOLD) })
+        nameColumn.addView(TextView(this).apply {
+            text = device.optString("id"); textSize = 11f; setTextColor(Color.argb(140, 245, 239, 227))
+            maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
+        })
+        row.addView(nameColumn, LinearLayout.LayoutParams(0, -2, 1f))
+        val label = stateLabel(type, state, attributes)
+        val key = deviceStateKey(type, state)
+        row.addView(when {
+            key == "unavailable" || key == "unknown" -> chip(label, mutedRed, stroke = mutedRed)
+            isActiveState(type, state) -> chip(label, chipDarkText, fill = accent)
+            else -> chip(label, dimText)
+        })
+        return row
+    }
+
+    /** Shows the Home Assistant devices list fetched by the "Home Assistant devices" row as a scrollable
+     * read-only dialog, grouped by area (areas sorted by name, devices with no area last), each device shown
+     * as a [type chip] name/id [state chip] row so the user can verify area lookup and current state at a glance. */
+    private fun showDevicesDialog(result: JSONObject) {
+        if (isFinishing || isDestroyed) return
+        val devices = result.optJSONArray("devices") ?: JSONArray()
+        val container = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(24), dp(8), dp(24), dp(8)) }
+        if (devices.length() == 0) {
+            container.addView(text(14f, getString(R.string.settings_ha_devices_empty)))
+        } else {
+            val byArea = LinkedHashMap<String, MutableList<JSONObject>>()
+            for (i in 0 until devices.length()) {
+                val device = devices.getJSONObject(i)
+                byArea.getOrPut(device.optString("area")) { mutableListOf() }.add(device)
+            }
+            val sections = byArea.keys.filter { it.isNotBlank() }.sorted() + byArea.keys.filter { it.isBlank() }
+            sections.forEachIndexed { index, area ->
+                if (index > 0) container.addView(View(this), LinearLayout.LayoutParams(-1, dp(10)))
+                container.addView(text(13f, if (area.isBlank()) getString(R.string.settings_ha_devices_no_area) else area).apply {
+                    setTextColor(accent); setPadding(0, 0, 0, dp(4))
+                })
+                container.addView(View(this).apply { setBackgroundColor(dimStroke) },
+                    LinearLayout.LayoutParams(-1, dp(1).coerceAtLeast(1)).apply { bottomMargin = dp(4) })
+                byArea.getValue(area).forEach { device -> container.addView(deviceRow(device)) }
+            }
+            if (result.optBoolean("truncated")) {
+                container.addView(text(12f, getString(R.string.settings_ha_devices_truncated, MAX_DEVICES)).apply {
+                    setTextColor(Color.argb(153, 245, 239, 227)); setPadding(0, dp(8), 0, 0)
+                })
+            }
+        }
+        val scroll = ScrollView(this).apply { addView(container) }
+        AlertDialog.Builder(this).setTitle(getString(R.string.settings_ha_devices_title, result.optInt("count")))
+            .setView(scroll).setPositiveButton(getString(R.string.dialog_close), null).show()
+    }
+
     /** Single-choice list dialog (e.g. picking a voice from a fixed set). */
     private fun showChoiceDialog(title: String, items: List<String>, selectedIndex: Int, onPick: (Int) -> Unit) {
         AlertDialog.Builder(this).setTitle(title)
@@ -335,6 +448,17 @@ class SettingsActivity : Activity() {
                 }
                 runOnUiThread {
                     Toast.makeText(this, message.fold({ getString(R.string.toast_ha_connected, it) }, { getString(R.string.toast_ha_connect_failed, it.message) }), Toast.LENGTH_LONG).show()
+                }
+            }.start()
+        }
+        addRow(rightPane, getString(R.string.settings_row_ha_devices), "") {
+            val url = settings.get("haUrl"); val token = settings.secret("haToken")
+            if (url.isBlank() || token.isBlank()) { Toast.makeText(this, getString(R.string.toast_set_url_and_token), Toast.LENGTH_LONG).show() }
+            else Thread {
+                val result = runCatching { client.homeAssistantDevices(settings) }
+                runOnUiThread {
+                    if (isFinishing || isDestroyed) return@runOnUiThread
+                    result.fold({ showDevicesDialog(it) }, { Toast.makeText(this, getString(R.string.toast_ha_connect_failed, it.message), Toast.LENGTH_LONG).show() })
                 }
             }.start()
         }

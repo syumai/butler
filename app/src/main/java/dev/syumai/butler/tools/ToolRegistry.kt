@@ -27,7 +27,12 @@ class ToolRegistry(private val context: Context, settings: Settings, client: Too
 
     private val tools: List<Tool> = buildList {
         add(SearchWebTool(context, settings, client))
-        if (settings.get("haUrl").isNotBlank() && settings.secret("haToken").isNotBlank()) add(HomeAssistantTool(context, settings, client))
+        if (settings.get("haUrl").isNotBlank() && settings.secret("haToken").isNotBlank()) {
+            add(HomeAssistantTool(context, settings, client))
+            add(ListHomeDevicesTool(context, settings, client))
+            add(GetDeviceStatesTool(context, settings, client))
+            add(ControlDevicesTool(context, settings, client))
+        }
     }
 
     private val mcp: JSONObject? = settings.get("mcpUrl").takeIf { it.isNotBlank() }?.let { url ->

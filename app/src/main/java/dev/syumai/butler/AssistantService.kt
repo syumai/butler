@@ -15,6 +15,9 @@ class AssistantService : Service() {
         var approval: JSONObject? = null; private set
         var conversing = false; private set
         const val START = "start"; const val TALK = "talk"; const val END = "end"; const val STOP = "stop"
+        /** After a device operation completes, how long to wait for the user to say anything else before
+         * ending the conversation on its own (short-circuiting the normal, longer silence timeout). */
+        private const val POST_ACTION_IDLE_MS = 5_000L
     }
     private val main = Handler(Looper.getMainLooper())
     private lateinit var settings: Settings
@@ -112,7 +115,7 @@ class AssistantService : Service() {
             generation++; transcript = ""; citations = ""; approval = null
             state = ConversationState()
             handled.clear(); startedAt = SystemClock.elapsedRealtime(); busySince = 0
-            idle = IdlePolicy(settings.timeoutSeconds * 1000); client = ToolClient(); registry = ToolRegistry(this, settings, client)
+            idle = IdlePolicy(settings.timeoutSeconds * 1000, POST_ACTION_IDLE_MS); client = ToolClient(); registry = ToolRegistry(this, settings, client)
             status = Status(R.string.status_connecting)
             val id = generation
             realtime = RealtimeClient(this, settings, { if (generation == id) runCatching { onEvent(it) }.onFailure { error ->
@@ -127,7 +130,9 @@ class AssistantService : Service() {
         when (e.optString("type")) {
             "session.created" -> realtime?.send(JSONObject().put("type", "session.update").put("session", JSONObject().put("type", "realtime").put("tools", registry.definitions())))
             "session.updated" -> if (state.sessionReady()) { realtime?.enableMicrophone(); status = Status(R.string.status_please_speak) }
-            "input_audio_buffer.speech_started" -> if (state.speechStarted()) { status = Status(R.string.status_listening); idle.update(SystemClock.elapsedRealtime(), true) }
+            "input_audio_buffer.speech_started" -> if (state.speechStarted()) {
+                status = Status(R.string.status_listening); idle.update(SystemClock.elapsedRealtime(), true); idle.disarmShort()
+            }
             "input_audio_buffer.speech_stopped" -> state.speechStopped()
             "response.created" -> { idle.update(SystemClock.elapsedRealtime(), true); state.responseCreated(); transcript = ""; status = Status(R.string.status_responding) }
             "output_audio_buffer.started" -> state.audioStarted()
@@ -155,12 +160,19 @@ class AssistantService : Service() {
                 state.toolCallStarted(); status = Status(tool?.busyStatus ?: R.string.status_searching)
                 val id = generation
                 worker.execute {
+                    var args: JSONObject? = null
                     val result = runCatching {
-                        val args = JSONObject(e.getString("arguments"))
-                        tool?.execute(args) ?: error("unknown tool $name")
+                        args = JSONObject(e.getString("arguments"))
+                        tool?.execute(args!!) ?: error("unknown tool $name")
                     }.getOrElse { JSONObject().put("error", getString(R.string.tool_error_generic)) }
+                    if (BuildConfig.DEBUG) android.util.Log.i("Butler", "tool $name args=$args -> ${result.toString().take(400)}")
                     main.post {
                         if (generation != id) return@post
+                        // A device operation just completed: if the user says nothing else, end the conversation
+                        // quickly (POST_ACTION_IDLE_MS) instead of waiting out the full silence timeout. Armed on
+                        // the main thread (like every other idle access) and only for the current conversation.
+                        if ((name == "control_devices" && result.optBoolean("done")) ||
+                            (name == "home_assistant" && result.optString("type") == "action_done")) idle.armShort()
                         citations = result.optJSONArray("content")?.toString() ?: ""
                         realtime?.send(JSONObject().put("type", "conversation.item.create").put("item", JSONObject()
                             .put("type", "function_call_output").put("call_id", callId).put("output", result.toString())))
