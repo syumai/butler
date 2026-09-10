@@ -212,8 +212,8 @@ class MainActivity : Activity() {
         WeatherScene.entries.firstOrNull { it.name == prop }
     }.getOrNull()
     // Debug-only: `adb shell setprop debug.butler.minute <0..1439>` forces the minute used for the default
-    // illustration's DayPalette, to check the time-of-day gradient on-device without waiting for the clock
-    // (see docs/device-validation.md). Read every tick since SystemProperties.get is a cheap native call.
+    // illustration's DayPalette, to check the time-of-day gradient on-device without waiting for the clock.
+    // Read every tick since SystemProperties.get is a cheap native call.
     private fun debugMinuteOverride(): Int? = if (!BuildConfig.DEBUG) null else runCatching {
         val prop = Class.forName("android.os.SystemProperties").getMethod("get", String::class.java).invoke(null, "debug.butler.minute") as String
         prop.toIntOrNull()

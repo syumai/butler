@@ -63,9 +63,8 @@ class Fixture:
 # ordinary-speech keep their original voice (alloy) and no instructions, so
 # regenerating them produces the same audio as before. hello-computer and
 # hello-world were dropped once the wake phrase was fixed to Hello Butler
-# and the keyword-spotter engine that used them was removed (see
-# docs/device-validation.md). The rest are additions for the Hello Butler /
-# Japanese-pronunciation wake phrase work:
+# and the keyword-spotter engine that used them was removed. The rest are
+# additions for the Hello Butler / Japanese-pronunciation wake phrase work:
 #   - hello-butler-ja / hello-butler-ja-2: the Japanese pronunciation of
 #     "Hello Butler" ("ハロー、バトラー"), two different voices/instructions
 #     to cover more of the pronunciation variance a real speaker produces.
@@ -82,22 +81,19 @@ FIXTURES: dict[str, Fixture] = {
     ),
     # Voice/instructions chosen by generating several candidates (alloy,
     # nova, onyx, echo, shimmer, ash, coral x with/without instructions)
-    # and comparing their Part-A-style ASR decode (see
-    # docs/device-validation.md, "Switching the wake phrase to Hello
-    # Butler with Japanese pronunciation"). gpt-4o-mini-tts output for the
-    # same voice/instructions is NOT deterministic across requests: repeat
-    # runs of the same (voice, instructions) sometimes decode "Butler" as
-    # a clean `▁BUT` token and sometimes as `▁BA ...` instead, and the
-    # "hello" shape also varies. alloy and nova, both with no instructions,
-    # were the most reliable at landing on a clean `▁BUT` across attempts;
-    # instructions did not measurably help. The currently checked-in audio
-    # for these two decodes as `▁HU D D LE ▁BUT U D A` (alloy) and
-    # `▁HU D D LE ▁BUT TER` (nova) — see docs/device-validation.md for the
-    # full set of candidates tried (historical: that tuning targeted the
-    # since-removed keyword-spotter engine). Regenerating either fixture
-    # will very likely produce different audio; re-run the on-device
-    # WakeInstrumentation (see README.md) against the Vosk engine after
-    # doing so.
+    # and comparing their Part-A-style ASR decode. gpt-4o-mini-tts output
+    # for the same voice/instructions is NOT deterministic across
+    # requests: repeat runs of the same (voice, instructions) sometimes
+    # decode "Butler" as a clean `▁BUT` token and sometimes as `▁BA ...`
+    # instead, and the "hello" shape also varies. alloy and nova, both
+    # with no instructions, were the most reliable at landing on a clean
+    # `▁BUT` across attempts; instructions did not measurably help. The
+    # currently checked-in audio for these two decodes as
+    # `▁HU D D LE ▁BUT U D A` (alloy) and `▁HU D D LE ▁BUT TER` (nova)
+    # (historical: that tuning targeted the since-removed keyword-spotter
+    # engine). Regenerating either fixture will very likely produce
+    # different audio; re-run the on-device WakeInstrumentation (see
+    # README.md) against the Vosk engine after doing so.
     "hello-butler-ja": Fixture("ハロー、バトラー", voice="alloy"),
     "hello-butler-ja-2": Fixture("ハロー、バトラー", voice="nova"),
     "ordinary-speech-ja": Fixture(

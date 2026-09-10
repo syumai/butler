@@ -46,7 +46,7 @@ internal class Landscape(context: Context, file: File, private val settings: Set
     var scene: WeatherScene = WeatherScene.DEFAULT
         set(value) { field = value; updateAnimating(); invalidate() }
     // Debug-only: `adb shell setprop debug.butler.scene <SCENE>` forces the scene on regardless of the
-    // weather-background setting, to check individual scenes on-device (see docs/device-validation.md).
+    // weather-background setting, to check individual scenes on-device.
     var debugForceWeather = false
         set(value) { field = value; updateAnimating() }
     // Drives only the default illustration's time-of-day palette (see DayPalette); the weather-scene and

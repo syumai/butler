@@ -3,7 +3,7 @@ name: wake-tuning
 description: Evaluate and tune Butler's Vosk wake detection against a real speaker's recordings when the wake word is missed too often or false-wakes on unrelated speech.
 ---
 
-Talk to the user in Japanese while following this skill; the skill body and any files it produces (`docs/device-validation.md` entries) stay in English, matching the rest of this repo.
+Talk to the user in Japanese while following this skill; the skill body and any files it produces stay in English, matching the rest of this repo.
 
 ## When to use
 
@@ -63,7 +63,7 @@ GRADLE_USER_HOME=<repo>/.tools/gradle-home \
 ./gradlew -q :app:testDebugUnitTest :app:assembleDebug :app:assembleDebugAndroidTest
 ```
 
-Install both APKs on the device, run `WakeInstrumentation` (no `mode`/`seconds` args = normal PASS/FAIL run), confirm PASS. Return the device to standby: `adb shell am start -n dev.syumai.butler/.MainActivity`. Append an English-language section to `docs/device-validation.md` describing the recording(s) used, the `vosk-eval.py` results, any grammar/adjacency-rule change made and why, and the instrumentation result. Ask the user to say the wake phrase ~10 more times on the real device and report back the hit rate.
+Install both APKs on the device, run `WakeInstrumentation` (no `mode`/`seconds` args = normal PASS/FAIL run), confirm PASS. Return the device to standby: `adb shell am start -n dev.syumai.butler/.MainActivity`. Describe in the commit message (in English) the recording(s) used, the `vosk-eval.py` results, any grammar/adjacency-rule change made and why, and the instrumentation result. Ask the user to say the wake phrase ~10 more times on the real device and report back the hit rate.
 
 ## Pass bar
 

@@ -24,7 +24,6 @@ A native Android app under development. It bundles a wake word model and only re
 ## Design and validation
 
 - [Architecture proposal](docs/architecture.md)
-- [Device validation procedure](docs/device-validation.md)
 
 ADB is set up and device connectivity has been confirmed. The device is Android 11 / API 30, 32-bit ARM (armeabi-v7a), 960x480.
 
@@ -63,7 +62,7 @@ Wake word detection is entirely self-contained via the bundled Vosk model — no
 - Targets a specific Android 11 device (targetSdk 35, armeabi-v7a). Not configured for Play Store publication.
 - Registers as a HOME app candidate but does not automatically change the default HOME app. Recovery after reboot, long-duration standby, and real voice quality all still require on-device validation.
 
-Loading the model takes several seconds the first time detection starts (about 6-10s on the device — Vosk additionally unpacks its ~99MB model from assets to internal storage once, on the very first use only, then loads it — see `docs/device-validation.md`). While the service is running, the weights are reused, and only the audio stream/recognizer is discarded and recreated for each conversation.
+Loading the model takes several seconds the first time detection starts (about 6-10s on the device — Vosk additionally unpacks its ~99MB model from assets to internal storage once, on the very first use only, then loads it). While the service is running, the weights are reused, and only the audio stream/recognizer is discarded and recreated for each conversation.
 
 The wake word can be verified without an API key. Voice conversation with OpenAI is verified after registering an API key. The default model ID is configurable in Settings and depends on availability per account.
 
