@@ -21,7 +21,8 @@ class Settings(context: Context) {
     private val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
     init {
         // Remove obsolete provider credentials and model after migration.
-        prefs.edit().remove("picovoice").remove("sensitivity").remove("wakePhrase").apply()
+        prefs.edit().remove("picovoice").remove("sensitivity").remove("wakePhrase")
+            .remove("wakeThreshold").remove("wakeEngine").apply()
         File(context.filesDir, "butler.ppn").delete()
     }
     val background = File(context.filesDir, "background.jpg")
@@ -33,18 +34,10 @@ class Settings(context: Context) {
     var weatherBackground: Boolean
         get() = prefs.getBoolean("weatherBackground", false)
         set(value) { prefs.edit().putBoolean("weatherBackground", value).apply() }
-    // Wake phrase selection is not exposed to the user yet; fixed to Hello Butler. Hey Butler
-    // caused too many false wakes (its short "HEY BUT" token sequences at a low threshold matched
-    // ordinary speech too easily); Hello Butler is a longer phrase, and its phrase file also covers
-    // the Japanese pronunciation ("ハロー、バトラー"), not just the English one. The enum and the
-    // other phrase assets are kept for the instrumentation tests.
+    // Wake phrase selection is not exposed to the user yet; fixed to Hello Butler. Hey Butler was
+    // tried first but caused too many false wakes, so the longer Hello Butler phrase was adopted.
+    // Vosk's Japanese model detects the Japanese pronunciation ("ハロー、バトラー") only.
     val wakePhrase get() = WakePhrase.HELLO_BUTLER
-    // Default is Vosk: the point of adding it is to try it as the standby engine. sherpa-onnx
-    // stays selectable in Settings -> Wake as a revert path (and for English-pronunciation
-    // coverage, which Vosk's Japanese-only grammar here does not support).
-    var wakeEngine: WakeEngine
-        get() = WakeEngine.fromId(get("wakeEngine", WakeEngine.VOSK.id))
-        set(value) = set("wakeEngine", value.id)
     val timeoutSeconds get() = get("timeout", "30").toLongOrNull()?.coerceIn(5, 600) ?: 30L
     val voice get() = Voice.fromId(get("voice"))
     fun setVoice(value: Voice) = set("voice", value.id)

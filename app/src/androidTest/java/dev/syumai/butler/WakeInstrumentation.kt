@@ -15,13 +15,12 @@ import kotlin.concurrent.thread
 
 /** Runs real bundled native inference on the target ABI, without API keys or microphone audio. */
 class WakeInstrumentation : Instrumentation() {
-    private var tune = false
     private var audioTest = false
     private var chime = false
     private var record = false
     private var recordSeconds = 20
     override fun onCreate(arguments: Bundle?) {
-        super.onCreate(arguments); tune = arguments?.getString("mode") == "tune"; audioTest = arguments?.getString("mode") == "audio"
+        super.onCreate(arguments); audioTest = arguments?.getString("mode") == "audio"
         chime = arguments?.getString("mode") == "chime"; record = arguments?.getString("mode") == "record"
         recordSeconds = (arguments?.getString("seconds")?.toIntOrNull() ?: 20).coerceIn(3, 120); start()
     }
@@ -37,59 +36,30 @@ class WakeInstrumentation : Instrumentation() {
         val report = Bundle()
         try {
             val started = SystemClock.elapsedRealtime()
-            if (tune) { tuneKeywords(); finish(Activity.RESULT_OK, Bundle()); return }
-            // Negative fixtures that must never trigger any wake phrase: English ordinary
-            // speech, Japanese ordinary speech, and a short Japanese near-miss ("バター取って")
-            // chosen because the model hears a bare "▁BUT" in it.
+            // Negative fixtures that must never trigger the wake phrase: English ordinary speech,
+            // Japanese ordinary speech, and a short Japanese near-miss ("バター取って") chosen
+            // because the model hears a bare "バトラー" in it.
             val negatives = listOf("ordinary-speech.pcm", "ordinary-speech-ja.pcm", "near-miss-ja.pcm")
-            for ((phrase, fixture) in listOf(
-                WakePhrase.HEY_BUTLER to "hey-butler.pcm",
-                WakePhrase.HELLO_BUTLER to "hello-butler.pcm",
-                // Japanese pronunciation of "Hello Butler" ("ハロー、バトラー"), two TTS voices
-                // covering two different ways the model hears the Japanese-accented "hello".
-                WakePhrase.HELLO_BUTLER to "hello-butler-ja.pcm",
-                WakePhrase.HELLO_BUTLER to "hello-butler-ja-2.pcm",
-                WakePhrase.HELLO_COMPUTER to "hello-computer.pcm",
-                WakePhrase.HELLO_WORLD to "hello-world.pcm",
-            )) {
-                WakeModelStore().use { models ->
-                    val first = models.acquire(targetContext, 0.25f, phrase)
-                    check(feed(first, fixture)) { "${phrase.name} was not detected ($fixture)" }
-                    models.discardAudio()
-                    val second = models.acquire(targetContext, 0.25f, phrase)
-                    check(first === second) { "Model was reloaded" }
-                    repeat(20) { check(!second.accept(ShortArray(1600), 1600)) { "Audio leaked into next stream" } }
-                    for (negative in negatives) {
-                        check(!feed(second, negative)) { "$negative triggered ${phrase.name}" }
-                    }
-                    second.restart()
-                    check(feed(second, fixture)) { "Detection failed after restart" }
-                    sendStatus(0, Bundle().apply { putString("stream", "${phrase.name} ($fixture): PASS\n") })
-                }
-            }
-            // Vosk engine: Japanese-pronunciation-only, runtime-grammar-restricted continuous ASR.
-            // Only HELLO_BUTLER has a voskPhrase; the English-pronunciation fixtures are fed but
-            // deliberately not asserted either way (Vosk mode does not support English pronunciation).
             WakeModelStore().use { models ->
                 val loadStarted = SystemClock.elapsedRealtime()
-                val first = models.acquire(targetContext, 0.25f, WakePhrase.HELLO_BUTLER, WakeEngine.VOSK)
+                val first = models.acquire(targetContext, WakePhrase.HELLO_BUTLER)
                 sendStatus(0, Bundle().apply { putString("stream", "Vosk model load/unpack: ${SystemClock.elapsedRealtime() - loadStarted}ms\n") })
-                check(feed(first, "hello-butler-ja.pcm")) { "VOSK HELLO_BUTLER was not detected (hello-butler-ja.pcm)" }
+                check(feed(first, "hello-butler-ja.pcm")) { "HELLO_BUTLER was not detected (hello-butler-ja.pcm)" }
                 models.discardAudio()
-                val second = models.acquire(targetContext, 0.25f, WakePhrase.HELLO_BUTLER, WakeEngine.VOSK)
-                check(first === second) { "Vosk model was reloaded" }
-                repeat(20) { check(!second.accept(ShortArray(1600), 1600)) { "Audio leaked into next stream (Vosk)" } }
+                val second = models.acquire(targetContext, WakePhrase.HELLO_BUTLER)
+                check(first === second) { "Model was reloaded" }
+                repeat(20) { check(!second.accept(ShortArray(1600), 1600)) { "Audio leaked into next stream" } }
                 for (negative in negatives) {
-                    check(!feed(second, negative)) { "$negative triggered VOSK HELLO_BUTLER" }
+                    check(!feed(second, negative)) { "$negative triggered HELLO_BUTLER" }
                 }
                 // English-pronunciation fixtures: not asserted either way, just fed through to make
                 // sure they don't crash the decoder. See third_party/vosk/README.md's limitation note.
                 for (english in listOf("hello-butler.pcm", "hey-butler.pcm")) feed(second, english)
                 second.restart()
-                check(feed(second, "hello-butler-ja-2.pcm")) { "Detection failed after restart (Vosk, hello-butler-ja-2.pcm)" }
-                sendStatus(0, Bundle().apply { putString("stream", "VOSK HELLO_BUTLER (hello-butler-ja.pcm, hello-butler-ja-2.pcm): PASS\n") })
+                check(feed(second, "hello-butler-ja-2.pcm")) { "Detection failed after restart (hello-butler-ja-2.pcm)" }
+                sendStatus(0, Bundle().apply { putString("stream", "HELLO_BUTLER (hello-butler-ja.pcm, hello-butler-ja-2.pcm): PASS\n") })
             }
-            report.putString("stream", "\nPASS: four phrases (six phrase/fixture pairs, including two Japanese-pronunciation Hello Butler fixtures) on sherpa-onnx, VOSK HELLO_BUTLER (Japanese pronunciation, two fixtures) on Vosk, three negative fixtures (English + two Japanese) against both engines, silence, cached restart; native armeabi-v7a. ${SystemClock.elapsedRealtime()-started}ms\n")
+            report.putString("stream", "\nPASS: HELLO_BUTLER (Japanese pronunciation, two fixtures), three negative fixtures (English + two Japanese), two English-pronunciation fixtures fed through unasserted, silence, cached restart; native armeabi-v7a. ${SystemClock.elapsedRealtime()-started}ms\n")
             report.putString("wake_test", "passed")
             finish(Activity.RESULT_OK, report)
         } catch (e: Throwable) {
@@ -141,29 +111,6 @@ class WakeInstrumentation : Instrumentation() {
         val file = File(targetContext.getExternalFilesDir(null), "record.pcm")
         file.writeBytes(data)
         finish(Activity.RESULT_OK, Bundle().apply { putString("stream", "PASS: recorded ${data.size} bytes, peak=$peak, path=${file.absolutePath}\n") })
-    }
-    private fun tuneKeywords() {
-        SherpaWakeDecoder(targetContext).use { decoder ->
-            val spotter = SherpaWakeDecoder::class.java.getDeclaredField("spotter").apply { isAccessible = true }.get(decoder) as com.k2fsa.sherpa.onnx.KeywordSpotter
-            for (name in listOf("hey-butler", "hello-butler")) {
-                val bytes = context.assets.open("$name.pcm").use { it.readBytes() }
-                val pcm = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer()
-                val samples = FloatArray(pcm.remaining() + 32000) { i -> if (i in 8000 until (8000 + bytes.size / 2)) pcm.get() / 32768f else 0f }
-                val lines = targetContext.assets.open("wake/$name.txt").bufferedReader().use { it.readLines() }
-                for (line in lines) for (score in listOf(1.5f, 3f, 5f)) for (threshold in listOf(0.25f, 0.1f, 0.05f)) {
-                    val stream = spotter.createStream(line.substringBefore(" @") + " :$score #$threshold @test")
-                    var hit = false
-                    try {
-                        for (offset in samples.indices step 1600) {
-                            stream.acceptWaveform(samples.copyOfRange(offset, minOf(offset + 1600, samples.size)), 16000)
-                            while (spotter.isReady(stream)) { spotter.decode(stream); if (spotter.getResult(stream).keyword.isNotBlank()) { hit = true; spotter.reset(stream) } }
-                        }
-                    } finally { stream.release() }
-                    if (hit) sendStatus(0, Bundle().apply { putString("stream", "$name $line score=$score threshold=$threshold: HIT\n") })
-                }
-                sendStatus(0, Bundle().apply { putString("stream", "$name tuning done\n") })
-            }
-        }
     }
     private fun feed(decoder: WakeDecoder, name: String): Boolean {
         val bytes = context.assets.open(name).use { it.readBytes() }

@@ -7,8 +7,6 @@ local.properties
 *.pv
 *.jks
 .DS_Store
-app/libs/*.aar
-app/src/main/assets/wake/*.onnx
 app/src/main/assets/vosk/
 
 # Local logo studies

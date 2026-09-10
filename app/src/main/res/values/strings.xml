@@ -95,11 +95,6 @@
 
     <string name="settings_row_wake_enabled">Listen for wake phrase</string>
     <string name="settings_row_wake_phrase">Wake phrase</string>
-    <string name="settings_row_wake_engine">Wake engine</string>
-    <string name="wake_engine_vosk">Vosk (Japanese pronunciation only)</string>
-    <string name="wake_engine_sherpa">sherpa-onnx (English and Japanese pronunciation)</string>
-    <string name="settings_row_wake_threshold">Detection threshold</string>
-    <string name="settings_helper_wake_threshold">0.05 to 0.9. Lower values detect more easily</string>
 
     <string name="settings_row_location_name">Region name</string>
     <string name="settings_row_latitude">Latitude</string>
@@ -168,7 +163,7 @@
     <string name="settings_row_app_info">App name and version</string>
     <string name="settings_app_info_format">%1$s · %2$s (%3$s)</string>
     <string name="settings_row_licenses">Third-party notices</string>
-    <string name="settings_licenses_body">sherpa-onnx (Apache-2.0)\nONNX Runtime (MIT)\nVosk (Apache-2.0)\nvosk-model-small-ja-0.22 (Apache-2.0)\nJNA (Apache-2.0)\nWebRTC\nOkHttp\nMaterial Icons (Apache-2.0)\nOpen-Meteo</string>
+    <string name="settings_licenses_body">Vosk (Apache-2.0)\nvosk-model-small-ja-0.22 (Apache-2.0)\nJNA (Apache-2.0)\nWebRTC\nOkHttp\nMaterial Icons (Apache-2.0)\nOpen-Meteo</string>
     <string name="toast_background_changed">Changed the background image</string>
     <string name="toast_file_read_failed">Couldn\'t read the file (max 20MB)</string>
 

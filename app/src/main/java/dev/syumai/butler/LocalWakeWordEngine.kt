@@ -8,7 +8,6 @@ import android.media.MediaRecorder
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
-import com.k2fsa.sherpa.onnx.*
 import org.json.JSONObject
 import org.vosk.LibVosk
 import org.vosk.LogLevel
@@ -17,56 +16,19 @@ import org.vosk.Recognizer
 import java.io.File
 import kotlin.concurrent.thread
 
-enum class WakePhrase(val asset: String, val label: String, val score: Float = 1.5f, val voskPhrase: String? = null) {
-    HELLO_COMPUTER("hello-computer", "Hello Computer"),
-    HEY_BUTLER("hey-butler", "Hey Butler", 3.0f),
-    HELLO_BUTLER("hello-butler", "Hello Butler", 3.0f, voskPhrase = "ハロー バトラー"),
-    HELLO_WORLD("keywords", "Hello World"),
+enum class WakePhrase(val label: String, val voskPhrase: String) {
+    HELLO_BUTLER("Hello Butler", "ハロー バトラー"),
 }
 
-/** Which on-device engine decodes the microphone stream. Vosk is the default (see Settings.wakeEngine);
- * sherpa-onnx stays selectable as a revert path and for its English-pronunciation coverage. */
-enum class WakeEngine(val id: String) {
-    SHERPA("sherpa"), VOSK("vosk");
-    companion object { fun fromId(id: String) = entries.firstOrNull { it.id == id } ?: VOSK }
-}
-
-/** One engine's keyword decoder. Samples are raw 16-bit PCM (int16-scaled), passed through from the
- * microphone buffer untouched; each implementation converts as it needs (sherpa wants normalized
- * floats, Vosk's float entry point wants int16-scaled floats). Bundled local inference only — no
- * network or credential dependencies. */
+/** The on-device decoder that watches the standby microphone stream. Samples are raw 16-bit PCM
+ * (int16-scaled), passed through from the microphone buffer untouched; the implementation converts
+ * as it needs (Vosk's float entry point wants int16-scaled floats). [VoskWakeDecoder] is the only
+ * implementation; the interface documents the contract and keeps [WakeModelStore]/[LocalWakeWordEngine]
+ * decoupled from it. */
 interface WakeDecoder : AutoCloseable {
     fun accept(samples: ShortArray, count: Int): Boolean
     fun restart()
     fun discardAudio()
-}
-
-class SherpaWakeDecoder(context: Context, threshold: Float = 0.25f, phrase: WakePhrase = WakePhrase.HELLO_COMPUTER) : WakeDecoder {
-    private val spotter = KeywordSpotter(context.assets, KeywordSpotterConfig(
-        featConfig = FeatureConfig(sampleRate = 16000, featureDim = 80),
-        modelConfig = OnlineModelConfig(
-            transducer = OnlineTransducerModelConfig(
-                encoder = "wake/encoder.onnx", decoder = "wake/decoder.onnx", joiner = "wake/joiner.onnx"),
-            tokens = "wake/tokens.txt", numThreads = 1, modelType = "zipformer2", debug = false,
-        ),
-        keywordsFile = "wake/${phrase.asset}.txt", keywordsScore = phrase.score, keywordsThreshold = threshold,
-    ))
-    private var stream = spotter.createStream()
-    init { check(stream.ptr != 0L) { "Could not create keyword stream" } }
-    override fun restart() { stream.release(); stream = spotter.createStream(); check(stream.ptr != 0L) }
-    override fun accept(samples: ShortArray, count: Int): Boolean {
-        stream.acceptWaveform(FloatArray(count) { samples[it] / 32768f }, 16000)
-        while (spotter.isReady(stream)) {
-            spotter.decode(stream)
-            if (spotter.getResult(stream).keyword.isNotBlank()) {
-                spotter.reset(stream)
-                return true
-            }
-        }
-        return false
-    }
-    override fun discardAudio() { stream.release() }
-    override fun close() { stream.release(); spotter.release() }
 }
 
 /** Pure keyword-adjacency check over a Vosk partial/final result JSON, no Android imports so it is
@@ -92,15 +54,14 @@ object VoskWake {
  * `["<phrase>", "[unk]"]`, and reports a hit via [VoskWake.hit] on every partial/final result. Model
  * assets (`vosk/vosk-model-small-ja-0.22/` under `assets/`) are unpacked to `filesDir` on first use;
  * `org.vosk.android.StorageService` is not used since it expects a `uuid` asset and the external
- * files dir, which don't fit this bundling. Japanese pronunciation only — [phrase] must have a
- * non-null [WakePhrase.voskPhrase]. */
+ * files dir, which don't fit this bundling. Japanese pronunciation only. */
 class VoskWakeDecoder(context: Context, phrase: WakePhrase) : WakeDecoder {
     companion object {
         private const val MODEL_ASSET_DIR = "vosk/vosk-model-small-ja-0.22"
         private const val MARKER = ".ready"
         @Volatile private var logLevelSet = false
     }
-    private val voskPhrase = requireNotNull(phrase.voskPhrase) { "Vosk does not support ${phrase.name}" }
+    private val voskPhrase = phrase.voskPhrase
     private val model: Model
     private var recognizer: Recognizer
 
@@ -158,20 +119,15 @@ class VoskWakeDecoder(context: Context, phrase: WakePhrase) : WakeDecoder {
     override fun close() { recognizer.close(); model.close() }
 }
 
-/** Retains weights across conversations; streams/recognizers are reset to discard previous audio. */
+/** Retains the model weights across conversations; the recognizer is reset to discard previous audio. */
 class WakeModelStore : AutoCloseable {
     private var cached: WakeDecoder? = null
-    private var engine: WakeEngine? = null
-    private var threshold: Float? = null
     private var phrase: WakePhrase? = null
-    @Synchronized fun acquire(context: Context, value: Float, selected: WakePhrase = WakePhrase.HELLO_COMPUTER, engine: WakeEngine = WakeEngine.SHERPA): WakeDecoder {
-        if (cached == null || this.engine != engine || threshold != value || phrase != selected) {
+    @Synchronized fun acquire(context: Context, selected: WakePhrase = WakePhrase.HELLO_BUTLER): WakeDecoder {
+        if (cached == null || phrase != selected) {
             cached?.close(); cached = null
-            cached = when (engine) {
-                WakeEngine.SHERPA -> SherpaWakeDecoder(context, value, selected)
-                WakeEngine.VOSK -> VoskWakeDecoder(context, selected)
-            }
-            this.engine = engine; threshold = value; phrase = selected
+            cached = VoskWakeDecoder(context, selected)
+            phrase = selected
         } else cached!!.restart()
         return cached!!
     }
@@ -180,7 +136,7 @@ class WakeModelStore : AutoCloseable {
 }
 
 /** Owns the microphone and decoder on one worker; callbacks run after native cleanup. */
-class LocalWakeWordEngine(private val context: Context, private val models: WakeModelStore, private val threshold: Float, private val phrase: WakePhrase, private val engine: WakeEngine,
+class LocalWakeWordEngine(private val context: Context, private val models: WakeModelStore, private val phrase: WakePhrase,
     private val ready: () -> Unit, private val detected: () -> Unit, private val failed: () -> Unit) {
     private val main = Handler(Looper.getMainLooper())
     private val lock = Any()
@@ -196,7 +152,7 @@ class LocalWakeWordEngine(private val context: Context, private val models: Wake
             var error = false
             try {
                 run {
-                    val decoder = models.acquire(context, threshold, phrase, engine)
+                    val decoder = models.acquire(context, phrase)
                     if (!stopped) {
                         val min = AudioRecord.getMinBufferSize(16000, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
                         check(min > 0)

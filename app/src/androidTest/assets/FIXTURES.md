@@ -9,8 +9,6 @@ These `.pcm` fixtures (16 kHz mono PCM16 little-endian raw audio) are synthetic 
 | Fixture | Text | Voice | Instructions |
 | --- | --- | --- | --- |
 | `hello-butler.pcm` | Hello Butler | alloy |  |
-| `hello-computer.pcm` | Hello Computer | alloy |  |
-| `hello-world.pcm` | Hello World | alloy |  |
 | `hey-butler.pcm` | Hey Butler | alloy |  |
 | `ordinary-speech.pcm` | Clouds are rolling in, so bring an umbrella this afternoon. | alloy |  |
 | `hello-butler-ja.pcm` | ハロー、バトラー | alloy |  |

@@ -94,7 +94,7 @@ class AssistantService : Service() {
             if (!settings.enabled) { status = message ?: Status(R.string.status_mic_stopped); stopSelf(); return@stopWake }
             status = Status(R.string.status_preparing_wake)
             val id = wakeGeneration
-            wake = LocalWakeWordEngine(this, wakeModels, settings.get("wakeThreshold", "0.25").toFloatOrNull()?.coerceIn(0.05f, 0.9f) ?: 0.25f, settings.wakePhrase, settings.wakeEngine,
+            wake = LocalWakeWordEngine(this, wakeModels, settings.wakePhrase,
                 ready = { if (id == wakeGeneration) status = message ?: Status(R.string.status_say_wake_phrase, settings.wakePhrase.label) },
                 detected = { if (id == wakeGeneration) { wake = null; begin(woken = true) } },
                 failed = { if (id == wakeGeneration) { wake = null; status = Status(R.string.status_wake_detect_failed) } })

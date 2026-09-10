@@ -33,7 +33,7 @@ At runtime, `VoskWakeDecoder` (`LocalWakeWordEngine.kt`) copies the asset tree o
 
 ## Limitation: Japanese pronunciation only
 
-`vosk-model-small-ja-0.22` is a Japanese acoustic/language model; it does not reliably recognize the English pronunciation of "Hello Butler" as `ハロー バトラー`. `WakePhrase.voskPhrase` is `null` for every phrase except `HELLO_BUTLER`, and `VoskWakeDecoder` throws `IllegalArgumentException` if constructed with a phrase that has no Vosk phrase. This is why sherpa-onnx (which does detect both pronunciations) remains selectable in Settings -> Wake -> "Wake engine" as a revert path.
+`vosk-model-small-ja-0.22` is a Japanese acoustic/language model; it does not reliably recognize the English pronunciation of "Hello Butler" as `ハロー バトラー`. Only the Japanese pronunciation ("ハロー、バトラー") wakes the app — saying "Hello Butler" in English is not detected. There is no other on-device engine to fall back to for English-pronunciation coverage.
 
 ## License files
 

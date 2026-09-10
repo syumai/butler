@@ -59,11 +59,13 @@ class Fixture:
     instructions: str | None = None
 
 
-# name -> Fixture(text, voice, instructions). hello-butler, hello-computer,
-# hello-world, hey-butler and ordinary-speech are the original five and keep
-# their original voice (alloy) and no instructions, so regenerating them
-# produces the same audio as before. The rest are additions for the
-# Hello Butler / Japanese-pronunciation wake phrase work:
+# name -> Fixture(text, voice, instructions). hello-butler, hey-butler and
+# ordinary-speech keep their original voice (alloy) and no instructions, so
+# regenerating them produces the same audio as before. hello-computer and
+# hello-world were dropped once the wake phrase was fixed to Hello Butler
+# and the keyword-spotter engine that used them was removed (see
+# docs/device-validation.md). The rest are additions for the Hello Butler /
+# Japanese-pronunciation wake phrase work:
 #   - hello-butler-ja / hello-butler-ja-2: the Japanese pronunciation of
 #     "Hello Butler" ("ハロー、バトラー"), two different voices/instructions
 #     to cover more of the pronunciation variance a real speaker produces.
@@ -74,8 +76,6 @@ class Fixture:
 #     detection, for a stricter Japanese negative case.
 FIXTURES: dict[str, Fixture] = {
     "hello-butler": Fixture("Hello Butler"),
-    "hello-computer": Fixture("Hello Computer"),
-    "hello-world": Fixture("Hello World"),
     "hey-butler": Fixture("Hey Butler"),
     "ordinary-speech": Fixture(
         "Clouds are rolling in, so bring an umbrella this afternoon."
@@ -93,9 +93,11 @@ FIXTURES: dict[str, Fixture] = {
     # instructions did not measurably help. The currently checked-in audio
     # for these two decodes as `▁HU D D LE ▁BUT U D A` (alloy) and
     # `▁HU D D LE ▁BUT TER` (nova) — see docs/device-validation.md for the
-    # full set of candidates tried. Regenerating either fixture will very
-    # likely produce different (but hopefully still `▁BUT`-clean) audio;
-    # re-run scripts/check-fixtures.py after doing so.
+    # full set of candidates tried (historical: that tuning targeted the
+    # since-removed keyword-spotter engine). Regenerating either fixture
+    # will very likely produce different audio; re-run the on-device
+    # WakeInstrumentation (see README.md) against the Vosk engine after
+    # doing so.
     "hello-butler-ja": Fixture("ハロー、バトラー", voice="alloy"),
     "hello-butler-ja-2": Fixture("ハロー、バトラー", voice="nova"),
     "ordinary-speech-ja": Fixture(
