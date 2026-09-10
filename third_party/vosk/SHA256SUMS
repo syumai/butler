@@ -1,0 +1,16 @@
+1df788e2c183f7fb2474c876b987e28ce40cb198db4b1c2dcf094d9b8e3d44e2  app/src/main/assets/vosk/vosk-model-small-ja-0.22/am/final.mdl
+cdb0d516e5b8886092f1d840c628107703a65b571dc3b16b888a9a3978958b96  app/src/main/assets/vosk/vosk-model-small-ja-0.22/conf/mfcc.conf
+d8d91d310a9659fed2d89f8ea4996af6163a43c3ab008cd278e4264120551712  app/src/main/assets/vosk/vosk-model-small-ja-0.22/conf/model.conf
+af6cd4863c1951e2b0e61f687eac1cac03fc24993f839a9cefab643a83f3470e  app/src/main/assets/vosk/vosk-model-small-ja-0.22/graph/disambig_tid.int
+4f75f879f5c96b3a5983f8aa1b2df6e4c6f05a845d332d7f2cf410a64f095011  app/src/main/assets/vosk/vosk-model-small-ja-0.22/graph/Gr.fst
+c0bd905b506cce18ee6a46d0a13d3c8a3310fc7b4a6b76dd99e924ed691cddf9  app/src/main/assets/vosk/vosk-model-small-ja-0.22/graph/HCLr.fst
+a68f13d4d54a09c05326ec0610ceb2fee0ae59353546630926a44272b94581ea  app/src/main/assets/vosk/vosk-model-small-ja-0.22/graph/phones.txt
+da199d9c991e0e84681ddbb34627b915b26302d50a8fdaa23c51e2bc3a50b5c3  app/src/main/assets/vosk/vosk-model-small-ja-0.22/graph/phones/word_boundary.int
+26f18f875e172b710740926eb1c2692c790a1fee68be5f314b1f8c99f9bf2fc6  app/src/main/assets/vosk/vosk-model-small-ja-0.22/graph/words.txt
+ebae597e7674342d09ae0d73222260e5fbf0e3d352a3135168d1ca44189029c0  app/src/main/assets/vosk/vosk-model-small-ja-0.22/ivector/final.dubm
+71eb575f7d31721c09b1a82d58d8b5c233f73629129df864a30dba206bd25f66  app/src/main/assets/vosk/vosk-model-small-ja-0.22/ivector/final.ie
+4daa60ee31233f147fcc3b17a559bff5112ada7c14fbb20266e6748bc6ba9684  app/src/main/assets/vosk/vosk-model-small-ja-0.22/ivector/final.mat
+5ce41441eaa105e0ab07e51ffb37a738a085a96aac3d9431a924de8dc7738ea7  app/src/main/assets/vosk/vosk-model-small-ja-0.22/ivector/global_cmvn.stats
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  app/src/main/assets/vosk/vosk-model-small-ja-0.22/ivector/online_cmvn.conf
+9f0c5f7c82d18eaf25d8bce470efa9f7741f88411fe428774bc0a9bb69a24756  app/src/main/assets/vosk/vosk-model-small-ja-0.22/ivector/splice.conf
+258b3b4f34f943d317b0fbca0778cb2669a19e0df84bece557daac8f0c58d6fc  app/src/main/assets/vosk/vosk-model-small-ja-0.22/README

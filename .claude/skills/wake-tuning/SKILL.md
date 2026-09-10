@@ -5,6 +5,8 @@ description: Tune Butler's wake-phrase detection (sherpa-onnx KeywordSpotter) ag
 
 Talk to the user in Japanese while following this skill; the skill body and any files it produces (phrase files, `docs/device-validation.md` entries) stay in English, matching the rest of this repo.
 
+**This skill covers the sherpa-onnx engine only.** Butler now has two switchable wake engines (`Settings.wakeEngine`, Settings → Wake → "Wake engine"); Vosk is the default. To tune or evaluate the Vosk engine instead, use `scripts/vosk-eval.py` (run with `.tools/vosk-python/bin/python`) against the same kind of recordings this skill describes collecting — it prints per-recording final/partial hit counts (using the same word-adjacency rule as `VoskWake.hit`) and decode time. Vosk's grammar is fixed to `["ハロー バトラー", "[unk]"]` (Japanese pronunciation only, no phrase-file tuning); see `third_party/vosk/README.md` for the design.
+
 ## When to use
 
 The user reports the wake phrase (currently "Hello Butler", Japanese pronunciation "ハロー、バトラー") is missed too often, or wakes on unrelated speech. Detection is sherpa-onnx `KeywordSpotter` + GigaSpeech 3.3M KWS (English BPE tokens); phrase files are `app/src/main/assets/wake/*.txt` (one line = token sequence, optional trailing `:score #threshold` override and `@Label`). The selected phrase is `Settings.wakePhrase` (`WakePhrase` enum, `LocalWakeWordEngine.kt`).

@@ -39,6 +39,12 @@ class Settings(context: Context) {
     // the Japanese pronunciation ("ハロー、バトラー"), not just the English one. The enum and the
     // other phrase assets are kept for the instrumentation tests.
     val wakePhrase get() = WakePhrase.HELLO_BUTLER
+    // Default is Vosk: the point of adding it is to try it as the standby engine. sherpa-onnx
+    // stays selectable in Settings -> Wake as a revert path (and for English-pronunciation
+    // coverage, which Vosk's Japanese-only grammar here does not support).
+    var wakeEngine: WakeEngine
+        get() = WakeEngine.fromId(get("wakeEngine", WakeEngine.VOSK.id))
+        set(value) = set("wakeEngine", value.id)
     val timeoutSeconds get() = get("timeout", "30").toLongOrNull()?.coerceIn(5, 600) ?: 30L
     val voice get() = Voice.fromId(get("voice"))
     fun setVoice(value: Voice) = set("voice", value.id)

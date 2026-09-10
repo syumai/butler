@@ -95,6 +95,9 @@
 
     <string name="settings_row_wake_enabled">呼びかけを待つ</string>
     <string name="settings_row_wake_phrase">呼びかけの言葉</string>
+    <string name="settings_row_wake_engine">検知エンジン</string>
+    <string name="wake_engine_vosk">Vosk（日本語の発音のみ）</string>
+    <string name="wake_engine_sherpa">sherpa-onnx（英語と日本語の発音）</string>
     <string name="settings_row_wake_threshold">検知のしきい値</string>
     <string name="settings_helper_wake_threshold">0.05〜0.9。小さいほど検知しやすい</string>
 
@@ -165,7 +168,7 @@
     <string name="settings_row_app_info">アプリ名とバージョン</string>
     <string name="settings_app_info_format">%1$s ・ %2$s (%3$s)</string>
     <string name="settings_row_licenses">配布物と出典</string>
-    <string name="settings_licenses_body">sherpa-onnx（Apache-2.0）\nONNX Runtime（MIT）\nWebRTC\nOkHttp\nMaterial Icons（Apache-2.0）\nOpen-Meteo</string>
+    <string name="settings_licenses_body">sherpa-onnx（Apache-2.0）\nONNX Runtime（MIT）\nVosk（Apache-2.0）\nvosk-model-small-ja-0.22（Apache-2.0）\nJNA（Apache-2.0）\nWebRTC\nOkHttp\nMaterial Icons（Apache-2.0）\nOpen-Meteo</string>
     <string name="toast_background_changed">背景画像を変更しました</string>
     <string name="toast_file_read_failed">ファイルを読み込めませんでした（上限20MB）</string>
 

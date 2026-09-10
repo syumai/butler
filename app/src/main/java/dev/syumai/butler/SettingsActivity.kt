@@ -367,15 +367,25 @@ class SettingsActivity : Activity() {
         }
     }
 
+    private fun wakeEngineLabel(engine: WakeEngine) = getString(if (engine == WakeEngine.VOSK) R.string.wake_engine_vosk else R.string.wake_engine_sherpa)
+
     private fun renderWake() {
         addSwitchRow(rightPane, getString(R.string.settings_row_wake_enabled), settings.enabled) { checked -> settings.enabled = checked; applyServiceState(); renderCategory(selected) }
         addRow(rightPane, getString(R.string.settings_row_wake_phrase), settings.wakePhrase.label, enabled = false)
-        addRow(rightPane, getString(R.string.settings_row_wake_threshold), settings.get("wakeThreshold", "0.25")) {
-            showEditDialog(getString(R.string.settings_row_wake_threshold), settings.get("wakeThreshold", "0.25"), secret = false,
-                inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL,
-                helper = getString(R.string.settings_helper_wake_threshold)) { value ->
-                val ok = runCatching { require(value.toFloat() in 0.05f..0.9f) }.isSuccess
-                if (!ok) false else { settings.set("wakeThreshold", value); applyServiceState(); renderCategory(selected); true }
+        addRow(rightPane, getString(R.string.settings_row_wake_engine), wakeEngineLabel(settings.wakeEngine)) {
+            showChoiceDialog(getString(R.string.settings_row_wake_engine), WakeEngine.entries.map { wakeEngineLabel(it) }, WakeEngine.entries.indexOf(settings.wakeEngine)) { which ->
+                settings.wakeEngine = WakeEngine.entries[which]; applyServiceState(); renderCategory(selected)
+            }
+        }
+        // Vosk runs a fixed runtime grammar with no tunable confidence threshold.
+        if (settings.wakeEngine == WakeEngine.SHERPA) {
+            addRow(rightPane, getString(R.string.settings_row_wake_threshold), settings.get("wakeThreshold", "0.25")) {
+                showEditDialog(getString(R.string.settings_row_wake_threshold), settings.get("wakeThreshold", "0.25"), secret = false,
+                    inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL,
+                    helper = getString(R.string.settings_helper_wake_threshold)) { value ->
+                    val ok = runCatching { require(value.toFloat() in 0.05f..0.9f) }.isSuccess
+                    if (!ok) false else { settings.set("wakeThreshold", value); applyServiceState(); renderCategory(selected); true }
+                }
             }
         }
     }

@@ -58,7 +58,7 @@ class WakeInstrumentation : Instrumentation() {
                     models.discardAudio()
                     val second = models.acquire(targetContext, 0.25f, phrase)
                     check(first === second) { "Model was reloaded" }
-                    repeat(20) { check(!second.accept(FloatArray(1600))) { "Audio leaked into next stream" } }
+                    repeat(20) { check(!second.accept(ShortArray(1600), 1600)) { "Audio leaked into next stream" } }
                     for (negative in negatives) {
                         check(!feed(second, negative)) { "$negative triggered ${phrase.name}" }
                     }
@@ -67,7 +67,29 @@ class WakeInstrumentation : Instrumentation() {
                     sendStatus(0, Bundle().apply { putString("stream", "${phrase.name} ($fixture): PASS\n") })
                 }
             }
-            report.putString("stream", "\nPASS: four phrases (six phrase/fixture pairs, including two Japanese-pronunciation Hello Butler fixtures), three negative fixtures (English + two Japanese), silence, cached restart; native armeabi-v7a. ${SystemClock.elapsedRealtime()-started}ms\n")
+            // Vosk engine: Japanese-pronunciation-only, runtime-grammar-restricted continuous ASR.
+            // Only HELLO_BUTLER has a voskPhrase; the English-pronunciation fixtures are fed but
+            // deliberately not asserted either way (Vosk mode does not support English pronunciation).
+            WakeModelStore().use { models ->
+                val loadStarted = SystemClock.elapsedRealtime()
+                val first = models.acquire(targetContext, 0.25f, WakePhrase.HELLO_BUTLER, WakeEngine.VOSK)
+                sendStatus(0, Bundle().apply { putString("stream", "Vosk model load/unpack: ${SystemClock.elapsedRealtime() - loadStarted}ms\n") })
+                check(feed(first, "hello-butler-ja.pcm")) { "VOSK HELLO_BUTLER was not detected (hello-butler-ja.pcm)" }
+                models.discardAudio()
+                val second = models.acquire(targetContext, 0.25f, WakePhrase.HELLO_BUTLER, WakeEngine.VOSK)
+                check(first === second) { "Vosk model was reloaded" }
+                repeat(20) { check(!second.accept(ShortArray(1600), 1600)) { "Audio leaked into next stream (Vosk)" } }
+                for (negative in negatives) {
+                    check(!feed(second, negative)) { "$negative triggered VOSK HELLO_BUTLER" }
+                }
+                // English-pronunciation fixtures: not asserted either way, just fed through to make
+                // sure they don't crash the decoder. See third_party/vosk/README.md's limitation note.
+                for (english in listOf("hello-butler.pcm", "hey-butler.pcm")) feed(second, english)
+                second.restart()
+                check(feed(second, "hello-butler-ja-2.pcm")) { "Detection failed after restart (Vosk, hello-butler-ja-2.pcm)" }
+                sendStatus(0, Bundle().apply { putString("stream", "VOSK HELLO_BUTLER (hello-butler-ja.pcm, hello-butler-ja-2.pcm): PASS\n") })
+            }
+            report.putString("stream", "\nPASS: four phrases (six phrase/fixture pairs, including two Japanese-pronunciation Hello Butler fixtures) on sherpa-onnx, VOSK HELLO_BUTLER (Japanese pronunciation, two fixtures) on Vosk, three negative fixtures (English + two Japanese) against both engines, silence, cached restart; native armeabi-v7a. ${SystemClock.elapsedRealtime()-started}ms\n")
             report.putString("wake_test", "passed")
             finish(Activity.RESULT_OK, report)
         } catch (e: Throwable) {
@@ -121,8 +143,8 @@ class WakeInstrumentation : Instrumentation() {
         finish(Activity.RESULT_OK, Bundle().apply { putString("stream", "PASS: recorded ${data.size} bytes, peak=$peak, path=${file.absolutePath}\n") })
     }
     private fun tuneKeywords() {
-        WakeDecoder(targetContext).use { decoder ->
-            val spotter = WakeDecoder::class.java.getDeclaredField("spotter").apply { isAccessible = true }.get(decoder) as com.k2fsa.sherpa.onnx.KeywordSpotter
+        SherpaWakeDecoder(targetContext).use { decoder ->
+            val spotter = SherpaWakeDecoder::class.java.getDeclaredField("spotter").apply { isAccessible = true }.get(decoder) as com.k2fsa.sherpa.onnx.KeywordSpotter
             for (name in listOf("hey-butler", "hello-butler")) {
                 val bytes = context.assets.open("$name.pcm").use { it.readBytes() }
                 val pcm = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer()
@@ -148,9 +170,12 @@ class WakeInstrumentation : Instrumentation() {
         check(bytes.size >= 3200 && bytes.size % 2 == 0) { "Missing PCM audio in $name" }
         check(bytes.any { it.toInt() != 0 }) { "Silent fixture: $name" }
         val pcm = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer()
-        val samples = FloatArray(pcm.remaining() + 24000) { i -> if (i in 8000 until (8000 + bytes.size / 2)) pcm.get() / 32768f else 0f }
+        val samples = ShortArray(pcm.remaining() + 24000) { i -> if (i in 8000 until (8000 + bytes.size / 2)) pcm.get() else 0 }
         var hit = false
-        for (offset in samples.indices step 1600) hit = decoder.accept(samples.copyOfRange(offset, minOf(offset + 1600, samples.size))) || hit
+        for (offset in samples.indices step 1600) {
+            val chunk = samples.copyOfRange(offset, minOf(offset + 1600, samples.size))
+            hit = decoder.accept(chunk, chunk.size) || hit
+        }
         return hit
     }
 }

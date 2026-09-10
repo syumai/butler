@@ -6,6 +6,7 @@ val requiredDeps = listOf(
     wakeAssetsDir.file("encoder.onnx").asFile,
     wakeAssetsDir.file("decoder.onnx").asFile,
     wakeAssetsDir.file("joiner.onnx").asFile,
+    layout.projectDirectory.file("src/main/assets/vosk/vosk-model-small-ja-0.22/am/final.mdl").asFile,
 )
 val fetchDeps = tasks.register<Exec>("fetchDeps") {
     commandLine(rootDir.resolve("scripts/fetch-deps.sh").absolutePath)
@@ -30,6 +31,8 @@ android {
 }
 dependencies {
     implementation(files("libs/sherpa-onnx-1.12.14.aar"))
+    implementation("net.java.dev.jna:jna:5.18.1@aar")
+    implementation("com.alphacephei:vosk-android:0.3.75@aar")
     implementation("io.github.webrtc-sdk:android:150.7871.01")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     testImplementation("junit:junit:4.13.2")
