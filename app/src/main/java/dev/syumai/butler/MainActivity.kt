@@ -36,6 +36,7 @@ class MainActivity : Activity() {
     private lateinit var transcript: TextView
     private lateinit var talk: Button
     private lateinit var end: Button
+    private lateinit var sources: Button
     private lateinit var approve: Button
     private lateinit var landscape: Landscape
     private var scene = WeatherScene.DEFAULT
@@ -59,6 +60,7 @@ class MainActivity : Activity() {
             transcript.updateText(AssistantService.transcript)
             approve.visibility = if (AssistantService.approval != null) View.VISIBLE else View.GONE
             end.visibility = if (AssistantService.conversing) View.VISIBLE else View.GONE
+            sources.visibility = if (AssistantService.conversing) View.VISIBLE else View.GONE
             cal.time = now
             landscape.minuteOfDay = debugMinuteOverride() ?: (cal.get(Calendar.HOUR_OF_DAY) * 60 + cal.get(Calendar.MINUTE))
             if (SystemClock.elapsedRealtime() - weatherAt > 900_000 || weatherAt == 0L) refreshWeather()
@@ -156,8 +158,8 @@ class MainActivity : Activity() {
         controls.addView(talk, LinearLayout.LayoutParams(0, controlHeight, 1f))
         end = outlinedButton(getString(R.string.home_end_conversation), 16f, Color.rgb(217, 198, 165)) { action(AssistantService.END) }.apply { visibility = View.GONE }
         controls.addView(end, LinearLayout.LayoutParams(dp(120), controlHeight).apply { marginStart = dp(8) })
-        controls.addView(outlinedButton(getString(R.string.home_sources), 16f, Color.argb(160, 217, 198, 165)) { showSources() },
-            LinearLayout.LayoutParams(-2, controlHeight).apply { marginStart = dp(8) })
+        sources = outlinedButton(getString(R.string.home_sources), 16f, Color.argb(160, 217, 198, 165)) { showSources() }.apply { visibility = View.GONE }
+        controls.addView(sources, LinearLayout.LayoutParams(-2, controlHeight).apply { marginStart = dp(8) })
         approve = outlinedButton(getString(R.string.home_confirm_execution), 16f, Color.argb(160, 217, 198, 165)) { showApproval() }.apply { visibility = View.GONE }
         controls.addView(approve, LinearLayout.LayoutParams(-2, controlHeight).apply { marginStart = dp(8) })
         column.addView(controls)
