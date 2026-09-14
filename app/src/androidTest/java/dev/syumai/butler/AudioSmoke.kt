@@ -19,7 +19,7 @@ object AudioSmoke {
     fun run(test: Instrumentation) {
         val finished = CountDownLatch(1)
         val error = AtomicReference<String?>(null)
-        var client: RealtimeClient? = null
+        var client: WebRtcClient? = null
         var requested = false
         var audioResponse = false
         var playbackStarted = false
@@ -35,7 +35,7 @@ object AudioSmoke {
         val sampleOutput = object : Runnable {
             override fun run() {
                 runCatching {
-                    val device = RealtimeClient::class.java.getDeclaredField("device").apply { isAccessible = true }.get(client)!!
+                    val device = WebRtcClient::class.java.getDeclaredField("device").apply { isAccessible = true }.get(client)!!
                     val output = device.javaClass.getField("audioOutput").get(device)!!
                     val buffer = (output.javaClass.getDeclaredField("byteBuffer").apply { isAccessible = true }.get(output) as ByteBuffer)
                         .duplicate().order(ByteOrder.LITTLE_ENDIAN)
@@ -51,7 +51,7 @@ object AudioSmoke {
         var energy = 0.0
         try {
             test.runOnMainSync {
-                client = RealtimeClient(test.targetContext, Settings(test.targetContext), { event ->
+                client = WebRtcClient(test.targetContext, RealtimeSignaling(test.targetContext, Settings(test.targetContext)), { event ->
                     when (event.optString("type")) {
                         "session.created" -> {
                             // Also validate the production tool definitions on Android's JSON implementation.
@@ -99,7 +99,7 @@ object AudioSmoke {
             check(audioResponse && playbackStarted) { "Missing generated audio=$audioResponse or playback=$playbackStarted" }
             val statsReady = CountDownLatch(1)
             test.runOnMainSync {
-                val peer = RealtimeClient::class.java.getDeclaredField("peer").apply { isAccessible = true }.get(client) as PeerConnection
+                val peer = WebRtcClient::class.java.getDeclaredField("peer").apply { isAccessible = true }.get(client) as PeerConnection
                 peer.getStats { report ->
                     report.statsMap.values.filter { it.type == "inbound-rtp" }.forEach {
                         bytes += (it.members["bytesReceived"] as? Number)?.toDouble() ?: 0.0

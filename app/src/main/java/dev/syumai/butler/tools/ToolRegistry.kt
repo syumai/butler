@@ -17,6 +17,11 @@ import org.json.JSONObject
  * execute. The optional hosted MCP tool definition is also built here, since like end_conversation
  * it is not dispatched through [find]/[Tool.execute] (MCP calls are handled via their own Realtime
  * events).
+ *
+ * [definitions] assembles the Realtime `tools` array (executable tools, then end_conversation, then
+ * the optional hosted MCP tool); [liveDefinitions] assembles the GPT-Live delegation `tools` array
+ * instead (hosted `web_search` in place of [SearchWebTool], then the other executable tools, then
+ * end_conversation — no MCP entry, since Live delegation only accepts `function`/`web_search` tools).
  */
 class ToolRegistry(private val context: Context, settings: Settings, client: ToolClient) {
     companion object {
@@ -51,6 +56,18 @@ class ToolRegistry(private val context: Context, settings: Settings, client: Too
         tools.forEach { defs.put(it.definition()) }
         defs.put(endConversation(context))
         mcp?.let { defs.put(it) }
+        return defs
+    }
+
+    /**
+     * GPT-Live delegation tool definitions: hosted `web_search` first (it replaces [SearchWebTool],
+     * which is excluded here), then every other executable tool's definition, then end_conversation.
+     * No MCP entry — Live delegation only accepts `function` and `web_search` tool types.
+     */
+    fun liveDefinitions(): JSONArray {
+        val defs = JSONArray().put(JSONObject().put("type", "web_search"))
+        tools.filterNot { it is SearchWebTool }.forEach { defs.put(it.definition()) }
+        defs.put(endConversation(context))
         return defs
     }
 }
