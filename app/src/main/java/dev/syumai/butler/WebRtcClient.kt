@@ -34,7 +34,7 @@ class RealtimeSignaling(private val context: Context, private val settings: Sett
     override fun request(sdp: String): Request {
         val session = JSONObject().put("type", "realtime").put("model", settings.get("model", "gpt-realtime-2.1"))
             .put("output_modalities", JSONArray().put("audio"))
-            .put("instructions", context.getString(R.string.prompt_realtime_instructions))
+            .put("instructions", context.getString(R.string.prompt_realtime_instructions) + "\n\n" + SessionContext.text(context, settings))
             .put("audio", JSONObject().put("output", JSONObject().put("voice", settings.voice(VoiceApi.REALTIME).id))
                 .put("input", JSONObject().put("turn_detection", JSONObject().put("type", "semantic_vad").put("create_response", true).put("interrupt_response", true))))
         tools?.let { session.put("tools", it) }
@@ -54,14 +54,20 @@ class RealtimeSignaling(private val context: Context, private val settings: Sett
 class LiveSignaling(private val context: Context, private val settings: Settings, private val registry: ToolRegistry) : Signaling {
     var sessionId: String? = null; private set
     override fun request(sdp: String): Request {
+        val sessionContext = SessionContext.text(context, settings)
         val session = JSONObject().put("model", settings.get("liveModel", "gpt-live-1"))
-            .put("instructions", context.getString(R.string.prompt_live_instructions))
+            .put("instructions", context.getString(R.string.prompt_live_instructions) + "\n\n" + sessionContext)
             .put("audio", JSONObject().put("output", JSONObject().put("voice", settings.voice(VoiceApi.LIVE).id)))
             .put("delegation", JSONObject().put("type", "responses").put("responses", JSONObject()
                 .put("model", settings.get("searchModel", "gpt-5.6-luna"))
-                .put("instructions", context.getString(R.string.prompt_live_backend_instructions))
+                .put("instructions", context.getString(R.string.prompt_live_backend_instructions) + "\n\n" + sessionContext)
                 .put("tools", registry.liveDefinitions())
                 .put("tool_choice", "auto").put("parallel_tool_calls", false)))
+        if (BuildConfig.DEBUG) {
+            val tools = registry.liveDefinitions()
+            val names = (0 until tools.length()).joinToString(" ") { tools.getJSONObject(it).optString("name").ifBlank { tools.getJSONObject(it).optString("type") } }
+            android.util.Log.d("Butler", "live session: model=${session.optString("model")} voice=${settings.voice(VoiceApi.LIVE).id} backend=${settings.get("searchModel", "gpt-5.6-luna")} tools=$names")
+        }
         val body = JSONObject().put("session", session).put("transport", JSONObject().put("type", "webrtc").put("sdp", sdp))
         return Request.Builder().url("https://api.openai.com/v1/live/sessions")
             .header("Authorization", "Bearer ${settings.secret("openai")}")
