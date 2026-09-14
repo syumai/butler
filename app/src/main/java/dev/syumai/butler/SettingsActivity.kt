@@ -343,14 +343,24 @@ class SettingsActivity : Activity() {
                 renderCategory(selected); true
             }
         }
-        addRow(rightPane, getString(R.string.settings_row_voice_model), settings.get("model", "gpt-realtime-2.1")) {
-            showEditDialog(getString(R.string.settings_row_voice_model), settings.get("model", "gpt-realtime-2.1"), secret = false, inputType = InputType.TYPE_CLASS_TEXT) { value ->
-                if (value.isBlank()) false else { settings.set("model", value); applyServiceState(); renderCategory(selected); true }
+        addRow(rightPane, getString(R.string.settings_row_voice_api), getString(if (settings.voiceApi == VoiceApi.LIVE) R.string.settings_voice_api_live else R.string.settings_voice_api_realtime)) {
+            val apis = listOf(VoiceApi.REALTIME, VoiceApi.LIVE)
+            val labels = listOf(getString(R.string.settings_voice_api_realtime), getString(R.string.settings_voice_api_live))
+            showChoiceDialog(getString(R.string.settings_row_voice_api), labels, apis.indexOf(settings.voiceApi)) { which ->
+                settings.setVoiceApi(apis[which]); applyServiceState(); renderCategory(selected)
             }
         }
-        addRow(rightPane, getString(R.string.settings_row_voice), getString(settings.voice.labelRes)) {
-            showChoiceDialog(getString(R.string.settings_row_voice), Voice.entries.map { getString(it.labelRes) }, Voice.entries.indexOf(settings.voice)) { which ->
-                settings.setVoice(Voice.entries[which]); applyServiceState(); renderCategory(selected)
+        val voiceModelKey = if (settings.voiceApi == VoiceApi.LIVE) "liveModel" else "model"
+        val voiceModelDefault = if (settings.voiceApi == VoiceApi.LIVE) "gpt-live-1" else "gpt-realtime-2.1"
+        addRow(rightPane, getString(R.string.settings_row_voice_model), settings.get(voiceModelKey, voiceModelDefault)) {
+            showEditDialog(getString(R.string.settings_row_voice_model), settings.get(voiceModelKey, voiceModelDefault), secret = false, inputType = InputType.TYPE_CLASS_TEXT) { value ->
+                if (value.isBlank()) false else { settings.set(voiceModelKey, value); applyServiceState(); renderCategory(selected); true }
+            }
+        }
+        addRow(rightPane, getString(R.string.settings_row_voice), getString(settings.voice(settings.voiceApi).labelRes)) {
+            val choices = Voice.forApi(settings.voiceApi)
+            showChoiceDialog(getString(R.string.settings_row_voice), choices.map { getString(it.labelRes) }, choices.indexOf(settings.voice(settings.voiceApi))) { which ->
+                settings.setVoice(choices[which]); applyServiceState(); renderCategory(selected)
             }
         }
         addRow(rightPane, getString(R.string.settings_row_search_model), settings.get("searchModel", "gpt-5.6-luna")) {

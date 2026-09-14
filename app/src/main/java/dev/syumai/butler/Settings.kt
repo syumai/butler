@@ -40,7 +40,11 @@ class Settings(context: Context) {
     val wakePhrase get() = WakePhrase.HELLO_BUTLER
     val timeoutSeconds get() = get("timeout", "30").toLongOrNull()?.coerceIn(5, 600) ?: 30L
     val voice get() = Voice.fromId(get("voice"))
+    /** Like [voice], but falls back to [api]'s default when the stored voice isn't valid for [api]. */
+    fun voice(api: VoiceApi): Voice = Voice.fromId(get("voice"), api)
     fun setVoice(value: Voice) = set("voice", value.id)
+    val voiceApi get() = VoiceApi.fromId(get("voiceApi"))
+    fun setVoiceApi(value: VoiceApi) = set("voiceApi", value.id)
     private fun key(): SecretKey {
         val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
         (store.getKey("butler-settings", null) as? SecretKey)?.let { return it }
