@@ -294,6 +294,11 @@ class AssistantService : Service() {
             "response.created" -> liveState.responseCreated()
             "response.output_item.done" -> {
                 val item = inner.optJSONObject("item") ?: return
+                if (BuildConfig.DEBUG) android.util.Log.d("Butler", "live backend item ${item.optString("type")}: " + when (item.optString("type")) {
+                    "message" -> item.optJSONArray("content")?.optJSONObject(0)?.optString("text").orEmpty().take(300)
+                    "function_call" -> "${item.optString("name")} ${item.optString("arguments").take(300)}"
+                    else -> ""
+                })
                 if (item.optString("type") == "function_call") onLiveFunctionCall(item)
             }
             "response.output_text.annotation.added" -> {
@@ -346,7 +351,7 @@ class AssistantService : Service() {
         worker.execute {
             var args: JSONObject? = null
             val result = runCatching {
-                args = JSONObject(argumentsJson)
+                args = JSONObject(argumentsJson.ifBlank { "{}" })
                 tool?.execute(args!!) ?: error("unknown tool $name")
             }.getOrElse { JSONObject().put("error", getString(R.string.tool_error_generic)) }
             if (BuildConfig.DEBUG) android.util.Log.i("Butler", "tool $name args=$args -> ${result.toString().take(400)}")

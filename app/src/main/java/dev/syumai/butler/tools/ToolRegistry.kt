@@ -10,7 +10,9 @@ import org.json.JSONObject
 /**
  * Owns the set of tools available for one conversation. Adding a tool means adding it to
  * [available] (and, if it needs the model to be able to call it, nothing else — AssistantService
- * dispatches purely by name via [find]).
+ * dispatches purely by name via [find]). [GetCurrentTimeTool] is always first in the list, since the
+ * current date/time is deliberately left out of the session instructions (see [dev.syumai.butler.SessionContext])
+ * and is instead meant to be looked up on demand.
  *
  * end_conversation is kept here as a definition builder rather than a [Tool]: it is control flow
  * handled directly by AssistantService's conversation state machine, not something with a result to
@@ -31,6 +33,7 @@ class ToolRegistry(private val context: Context, settings: Settings, client: Too
     }
 
     private val tools: List<Tool> = buildList {
+        add(GetCurrentTimeTool(context))
         add(SearchWebTool(context, settings, client))
         if (settings.get("haUrl").isNotBlank() && settings.secret("haToken").isNotBlank()) {
             add(HomeAssistantTool(context, settings, client))
