@@ -34,6 +34,7 @@ class ToolRegistry(private val context: Context, settings: Settings, client: Too
 
     private val tools: List<Tool> = buildList {
         add(GetCurrentTimeTool(context))
+        add(GetHomeWeatherTool(context, settings, client))
         add(SearchWebTool(context, settings, client))
         if (settings.get("haUrl").isNotBlank() && settings.secret("haToken").isNotBlank()) {
             add(HomeAssistantTool(context, settings, client))

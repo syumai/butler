@@ -4,71 +4,132 @@ import android.Manifest
 import android.app.*
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.content.res.ColorStateList
 import android.graphics.*
-import android.graphics.drawable.Drawable
+import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
-import android.graphics.drawable.RippleDrawable
 import android.net.Uri
 import android.os.*
 import android.text.SpannableString
 import android.text.Spanned
 import android.text.method.LinkMovementMethod
 import android.text.style.URLSpan
-import android.util.TypedValue
 import android.view.*
 import android.widget.*
 import org.json.JSONArray
-import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
 import java.util.concurrent.Executors
 
+/**
+ * Home screen (§2 of the UI redesign spec): a [PagerView] of four full-screen pages (clock/weather/
+ * smart home/music) with a floating tab strip, page dots and the settings gear on top, plus the
+ * [ConversationView] overlay shown while [AssistantService.conversing]. MainActivity itself only
+ * owns cross-cutting state (the tick loop, weather refresh/caching via [WeatherStore], settings-dirty
+ * rebuilds, the RECORD_AUDIO flow, the approval/sources dialogs and debug overrides) — everything
+ * page-specific lives in ClockPage/WeatherPage/SmartHomePage/MusicPage/ConversationView themselves.
+ */
 class MainActivity : Activity() {
     private lateinit var settings: Settings
     private val main = Handler(Looper.getMainLooper())
     private val worker = Executors.newSingleThreadExecutor()
-    private val weatherClient = ToolClient()
-    private lateinit var clock: TextView
-    private lateinit var date: TextView
-    private lateinit var weather: TextView
-    private lateinit var status: TextView
-    private lateinit var transcript: TextView
-    private lateinit var talk: Button
-    private lateinit var end: Button
-    private lateinit var sources: Button
-    private lateinit var approve: Button
+    private val client = ToolClient()
     private lateinit var landscape: Landscape
+    private lateinit var pager: PagerView
+    private lateinit var clockPage: ClockPage
+    private lateinit var weatherPage: WeatherPage
+    private lateinit var smartHome: SmartHomePage
+    private lateinit var music: MusicPage
+    private lateinit var conversation: ConversationView
+    private lateinit var tabStrip: LinearLayout
+    private lateinit var tabButtons: List<TextView>
+    private lateinit var dots: List<View>
+    private lateinit var dotsRow: LinearLayout
+    private lateinit var settingsButton: ImageButton
     private var scene = WeatherScene.DEFAULT
     private var weatherAt = 0L
     private var weatherInFlight = false
     private var visible = false
     private var pendingAction = AssistantService.START
+    private var sheetOpen = false
+    private var lastTouchAt = 0L
+    private var lastViewRequestSerial = 0
+    private var lastHomeStateSerial = 0
+    private var lastConversing = false
+    /** True while ConversationView is docked (§9/§8) — its state dot/text shares the tab strip's
+     *  top-left corner, so the strip fades out for as long as this is true (§ issue 8). */
+    private var conversationDocked = false
     private val clockFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
-    private val dateFormat = SimpleDateFormat(
-        android.text.format.DateFormat.getBestDateTimePattern(Locale.getDefault(), "EEEEMMMMd"), Locale.getDefault())
+    // Set in onCreate (needs getString, so it can't be a plain field initializer — those run before
+    // the Activity is attached to its Context). §4's home_date_pattern, e.g. "9月16日 (水)" / "Sep 16 (Wed)".
+    private lateinit var dateFormat: SimpleDateFormat
     // Reused instead of Calendar.getInstance() every tick, just to convert `now` into hour/minute for the
     // default illustration's time-of-day palette (Landscape.minuteOfDay).
     private val cal = Calendar.getInstance()
+    /** Status resource ids the clock page's bottom-left line is shown for (§4) — attention-worthy
+     * states only; every other status (including the normal idle/listening/responding flow) shows
+     * nothing there, unlike the old always-on status line. */
+    private val attentionStatuses = setOf(
+        R.string.status_mic_stopped, R.string.status_need_openai_key, R.string.status_wake_detected_need_key,
+        R.string.status_wake_detect_failed, R.string.status_timeout, R.string.status_api_error,
+        R.string.status_connect_failed, R.string.status_realtime_connect_failed, R.string.status_event_process_failed,
+        R.string.status_audio_focus_lost, R.string.status_audio_io_stopped, R.string.status_response_failed_retry,
+        R.string.status_tool_call_limit, R.string.status_mcp_connect_failed,
+    )
     private val tick = object : Runnable {
         override fun run() {
             if (!visible) return
             val now = Date()
-            clock.updateText(clockFormat.format(now))
-            date.updateText(dateFormat.format(now))
-            status.updateText(AssistantService.status.resolve(this@MainActivity))
-            transcript.updateText(AssistantService.transcript)
-            approve.visibility = if (AssistantService.approval != null) View.VISIBLE else View.GONE
-            end.visibility = if (AssistantService.conversing) View.VISIBLE else View.GONE
-            sources.visibility = if (AssistantService.conversing) View.VISIBLE else View.GONE
+            clockPage.updateClock(clockFormat.format(now), dateFormat.format(now))
+            clockPage.setStatus(if (AssistantService.status.text in attentionStatuses) AssistantService.status.resolve(this@MainActivity) else "")
             cal.time = now
             landscape.minuteOfDay = debugMinuteOverride() ?: (cal.get(Calendar.HOUR_OF_DAY) * 60 + cal.get(Calendar.MINUTE))
             if (SystemClock.elapsedRealtime() - weatherAt > 900_000 || weatherAt == 0L) refreshWeather()
+
+            // Debug-only (§ issue 8): `adb shell setprop debug.butler.talk 1|2` drives the conversation
+            // overlay with a fake exchange (status_responding, a canned user/bot transcript, no citations)
+            // so it can be screenshotted on-device without exercising a real conversation; 2 also docks
+            // the overlay over the weather page, matching the real auto-switch (§9) it stands in for.
+            val talkOverride = debugTalkOverride()
+            if (talkOverride != null) {
+                conversation.update(Status(R.string.status_responding), DEBUG_FAKE_USER_TRANSCRIPT, DEBUG_FAKE_TRANSCRIPT, "", false, true)
+                conversation.setDocked(talkOverride == 2)
+                if (talkOverride == 2 && pager.currentPage != 1) pager.setPage(1)
+            } else {
+                conversation.update(AssistantService.status, AssistantService.userTranscript, AssistantService.transcript,
+                    AssistantService.citations, AssistantService.approval != null, AssistantService.conversing)
+            }
+
+            if (AssistantService.viewRequestSerial != lastViewRequestSerial) {
+                lastViewRequestSerial = AssistantService.viewRequestSerial
+                pager.setPage(AssistantService.viewRequest)
+                conversation.setDocked(true)
+                // The assistant just opened this page on the user's behalf; without this, a stale
+                // lastTouchAt (from before/during the conversation) could make auto-return fire almost
+                // immediately, before the user has had a chance to look at what it switched to.
+                lastTouchAt = SystemClock.elapsedRealtime()
+            }
+            if (AssistantService.homeStateSerial != lastHomeStateSerial) {
+                lastHomeStateSerial = AssistantService.homeStateSerial
+                smartHome.refresh(); music.refresh()
+            }
+            val conversingNow = AssistantService.conversing
+            // Same reasoning as above: the moment a conversation ends, the page it leaves behind (e.g. one
+            // the assistant switched to) should get the full 3 minutes again, not whatever was left over
+            // from a stale touch before/during the conversation.
+            if (lastConversing && !conversingNow) lastTouchAt = SystemClock.elapsedRealtime()
+            lastConversing = conversingNow
+            pager.locked = conversingNow || sheetOpen || talkOverride != null
+            // Auto-return (§2): only ever fires away from the clock page, and never mid-conversation
+            // (the page is likely docked/driven by the assistant right then, not idly abandoned).
+            if (pager.currentPage != 0 && !conversingNow && talkOverride == null &&
+                SystemClock.elapsedRealtime() - lastTouchAt > AUTO_RETURN_MS) pager.setPage(0)
+
             main.postDelayed(this, 250)
         }
     }
     override fun onCreate(state: Bundle?) {
         super.onCreate(state); settings = Settings(this)
+        dateFormat = SimpleDateFormat(getString(R.string.home_date_pattern), Locale.getDefault())
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         home()
     }
@@ -79,91 +140,137 @@ class MainActivity : Activity() {
             it.hide(WindowInsets.Type.systemBars())
         }
     }
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        lastTouchAt = SystemClock.elapsedRealtime()
+        return super.dispatchTouchEvent(ev)
+    }
     override fun onResume() {
-        super.onResume(); visible = true; main.removeCallbacks(tick); main.post(tick)
+        super.onResume(); visible = true; lastTouchAt = SystemClock.elapsedRealtime()
+        main.removeCallbacks(tick); main.post(tick)
         // Rebuild the home screen if SettingsActivity changed something it reflects (background, weather region/toggle).
-        if (Settings.dirty) { Settings.dirty = false; weatherAt = 0; home() }
+        if (Settings.dirty) { Settings.dirty = false; weatherAt = 0; home() } else pageShown(pager.currentPage)
         if (settings.enabled && checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) action(AssistantService.START)
     }
-    override fun onPause() { visible = false; main.removeCallbacks(tick); super.onPause() }
-    override fun onDestroy() { weatherClient.cancel(); worker.shutdownNow(); main.removeCallbacksAndMessages(null); super.onDestroy() }
-    private fun TextView.updateText(value: String) { if (text.toString() != value) text = value }
-    private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
-    private fun text(size: Float, value: String = "") = TextView(this).apply { textSize = size; text = value; setTextColor(Color.rgb(245, 239, 227)) }
-    /** Rounded-rect shape used as both the button's visible background and its ripple mask. */
-    private fun roundedShape(radius: Float, fill: Int = Color.WHITE, strokeColor: Int? = null, strokeWidth: Int = 0) = GradientDrawable().apply {
-        shape = GradientDrawable.RECTANGLE; cornerRadius = radius
-        if (strokeColor != null) { setColor(Color.TRANSPARENT); setStroke(strokeWidth, strokeColor) } else setColor(fill)
+    override fun onPause() {
+        visible = false; main.removeCallbacks(tick)
+        if (::pager.isInitialized) pageHidden(pager.currentPage)
+        super.onPause()
     }
-    private fun rippleOn(content: Drawable, radius: Float, rippleColor: Int) =
-        RippleDrawable(ColorStateList.valueOf(rippleColor), content, roundedShape(radius))
-    /** Material "contained" button: filled rounded background (tinted), white ripple, default press elevation from the theme's Button style. */
-    private fun filledButton(label: String, textSizeSp: Float, tint: Int, clicked: () -> Unit) = Button(this).apply {
-        text = label; isAllCaps = false; textSize = textSizeSp; setTypeface(typeface, Typeface.BOLD); setTextColor(Color.WHITE)
-        val radius = dp(12).toFloat()
-        background = rippleOn(roundedShape(radius), radius, Color.argb(90, 255, 255, 255))
-        backgroundTintList = ColorStateList.valueOf(tint)
-        setOnClickListener { clicked() }
-    }
-    /** Material "outlined" button: 1dp stroke, transparent fill, ripple; used for secondary actions. */
-    private fun outlinedButton(label: String, textSizeSp: Float, strokeColor: Int, clicked: () -> Unit) = Button(this).apply {
-        text = label; isAllCaps = false; textSize = textSizeSp; setTextColor(Color.rgb(245, 239, 227))
-        val radius = dp(10).toFloat()
-        background = rippleOn(roundedShape(radius, strokeColor = strokeColor, strokeWidth = dp(1)), radius, Color.argb(70, strokeColor.red(), strokeColor.green(), strokeColor.blue()))
-        backgroundTintList = null
-        setPadding(dp(16), paddingTop, dp(16), paddingBottom)
-        setOnClickListener { clicked() }
-    }
-    private fun Int.red() = Color.red(this)
-    private fun Int.green() = Color.green(this)
-    private fun Int.blue() = Color.blue(this)
-    /** Borderless ripple used for icon buttons, matching the theme's ?attr/selectableItemBackgroundBorderless. */
-    private fun borderlessRippleBackground(): Drawable {
-        val out = TypedValue(); theme.resolveAttribute(android.R.attr.selectableItemBackgroundBorderless, out, true)
-        return getDrawable(out.resourceId)!!
-    }
+    override fun onDestroy() { client.cancel(); worker.shutdownNow(); main.removeCallbacksAndMessages(null); super.onDestroy() }
     private fun home() {
         val root = FrameLayout(this)
         landscape = Landscape(this, settings.background, settings).apply { scene = this@MainActivity.scene }
         root.addView(landscape, FrameLayout.LayoutParams(-1, -1))
-        val shade = View(this).apply { background = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, intArrayOf(0xBB102326.toInt(), 0x20102326)) }
-        root.addView(shade, FrameLayout.LayoutParams(-1, -1))
-        val column = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(34), dp(20), dp(34), dp(12)) }
-        root.addView(column, FrameLayout.LayoutParams(-1, -1))
-        val header = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
-        header.addView(text(12f, "B U T L E R"), LinearLayout.LayoutParams(0, -2, 1f))
-        val settingsButton = ImageButton(this).apply {
+        // Scrim (§7): a flat wash over the whole scene, plus a stronger gradient hugging the bottom
+        // edge, so the clock/date/status text stays readable against a bright midday sky without
+        // darkening the sky itself the way the old left-to-right shade did.
+        root.addView(View(this).apply { background = ColorDrawable(0x38102326.toInt()) }, FrameLayout.LayoutParams(-1, -1))
+        root.addView(View(this).apply {
+            background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(0x00102326.toInt(), 0x00102326.toInt(), 0x8C102326.toInt()))
+        }, FrameLayout.LayoutParams(-1, -1))
+
+        clockPage = ClockPage(this).apply { onWeatherTap = { pager.setPage(1) } }
+        weatherPage = WeatherPage(this, settings)
+        clockPage.bind(null, false); weatherPage.bind(null, false) // placeholder until the first refreshWeather() lands
+        smartHome = SmartHomePage(this, settings, client, worker).apply {
+            onSheetOpenChanged = { open -> sheetOpen = open; setChromeVisible(!open) }
+        }
+        music = MusicPage(this, settings, client, worker)
+        pager = PagerView(this).apply {
+            addView(clockPage, ViewGroup.LayoutParams(-1, -1)); addView(weatherPage, ViewGroup.LayoutParams(-1, -1))
+            addView(smartHome, ViewGroup.LayoutParams(-1, -1)); addView(music, ViewGroup.LayoutParams(-1, -1))
+            onPageChanged = { onPageChanged(it) }
+        }
+        root.addView(pager, FrameLayout.LayoutParams(-1, -1))
+
+        val labels = listOf(R.string.home_tab_clock, R.string.home_tab_weather, R.string.home_tab_smart_home, R.string.home_tab_music)
+        tabButtons = labels.mapIndexed { i, res -> tabButton(getString(res)) { pager.setPage(i) } }
+        tabStrip = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE; cornerRadius = dp(17).toFloat(); setColor(0x8C08191B.toInt()); setStroke(dp(1), 0x1AFFFFFF)
+            }
+            setPadding(dp(5), dp(5), dp(5), dp(5))
+            tabButtons.forEach { addView(it) }
+            alpha = 0f; visibility = View.INVISIBLE
+        }
+        root.addView(tabStrip, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.START).apply { leftMargin = dp(34); topMargin = dp(18) })
+
+        settingsButton = ImageButton(this).apply {
             setImageResource(R.drawable.ic_settings); scaleType = ImageView.ScaleType.CENTER
             background = borderlessRippleBackground()
             contentDescription = getString(R.string.settings_button_description)
             setOnClickListener { startActivity(Intent(this@MainActivity, SettingsActivity::class.java)) }
         }
-        header.addView(settingsButton, LinearLayout.LayoutParams(dp(48), dp(48)))
-        column.addView(header)
-        clock = text(88f).apply { typeface = Typeface.create("sans-serif-thin", Typeface.NORMAL); includeFontPadding = false }
-        column.addView(clock)
-        date = text(17f); column.addView(date)
-        weather = text(14f, getString(R.string.weather_placeholder_not_set)).apply { setPadding(0, dp(12), 0, 0); setOnClickListener {
-            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://open-meteo.com/")))
-        } }
-        column.addView(weather)
-        transcript = text(15f).apply { maxLines = 2; setPadding(0, dp(8), 0, 0) }
-        column.addView(transcript, LinearLayout.LayoutParams(-1, 0, 1f))
-        status = text(12f); column.addView(status)
-        // All four controls share one fixed row height (56dp) via explicit LayoutParams height, never wrap_content,
-        // so their top/bottom edges line up regardless of label length; gravity centers them within the row.
-        val controlHeight = dp(56)
-        val controls = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(8), 0, 0) }
-        talk = filledButton(getString(R.string.home_talk), 22f, Color.argb(230, 46, 110, 118)) { action(AssistantService.TALK) }
-        controls.addView(talk, LinearLayout.LayoutParams(0, controlHeight, 1f))
-        end = outlinedButton(getString(R.string.home_end_conversation), 16f, Color.rgb(217, 198, 165)) { action(AssistantService.END) }.apply { visibility = View.GONE }
-        controls.addView(end, LinearLayout.LayoutParams(dp(120), controlHeight).apply { marginStart = dp(8) })
-        sources = outlinedButton(getString(R.string.home_sources), 16f, Color.argb(160, 217, 198, 165)) { showSources() }.apply { visibility = View.GONE }
-        controls.addView(sources, LinearLayout.LayoutParams(-2, controlHeight).apply { marginStart = dp(8) })
-        approve = outlinedButton(getString(R.string.home_confirm_execution), 16f, Color.argb(160, 217, 198, 165)) { showApproval() }.apply { visibility = View.GONE }
-        controls.addView(approve, LinearLayout.LayoutParams(-2, controlHeight).apply { marginStart = dp(8) })
-        column.addView(controls)
+        root.addView(settingsButton, FrameLayout.LayoutParams(dp(48), dp(48), Gravity.TOP or Gravity.END).apply { rightMargin = dp(34); topMargin = dp(20) })
+
+        dots = (0 until 4).map { View(this).apply { background = roundedShape(dp(2).toFloat(), fill = Palette.CREAM_30) } }
+        dotsRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        dots.forEach { dotsRow.addView(it, LinearLayout.LayoutParams(dp(5), dp(5)).apply { marginStart = dp(4); marginEnd = dp(4) }) }
+        root.addView(dotsRow, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply { bottomMargin = dp(12) })
+        updateDots(0); updateTabStrip(0, animated = false)
+
+        conversation = ConversationView(this).apply {
+            onEnd = { action(AssistantService.END) }
+            onSources = { showSources() }
+            onApprove = { showApproval() }
+            onDockedChanged = { docked -> conversationDocked = docked; updateTabStrip(pager.currentPage, animated = true) }
+        }
+        root.addView(conversation, FrameLayout.LayoutParams(-1, -1))
+
         setContentView(root)
+    }
+    private fun onPageChanged(index: Int) {
+        pageHidden(previousPage); previousPage = index; pageShown(index)
+        updateTabStrip(index, animated = true)
+        updateDots(index)
+    }
+    private var previousPage = 0
+    private fun pageShown(index: Int) { when (index) { 2 -> smartHome.onShown(); 3 -> music.onShown() } }
+    private fun pageHidden(index: Int) { when (index) { 2 -> smartHome.onHidden(); 3 -> music.onHidden() } }
+    private fun updateTabStrip(index: Int, animated: Boolean) {
+        tabButtons.forEachIndexed { i, button ->
+            val active = i == index
+            button.setTextColor(if (active) Palette.CREAM else Palette.CREAM_60)
+            button.background = if (active) roundedShape(dp(999).toFloat(), fill = Palette.CREAM_12) else null
+        }
+        val shouldShow = index > 0 && !conversationDocked
+        val target = if (shouldShow) 1f else 0f
+        if (!animated) { tabStrip.alpha = target; tabStrip.visibility = if (shouldShow) View.VISIBLE else View.INVISIBLE; return }
+        if (shouldShow) tabStrip.visibility = View.VISIBLE
+        tabStrip.animate().alpha(target).setDuration(200).withEndAction { if (!shouldShow) tabStrip.visibility = View.INVISIBLE }.start()
+    }
+    private fun updateDots(index: Int) {
+        dots.forEachIndexed { i, dot ->
+            val active = i == index
+            dot.background = roundedShape(dp(2).toFloat(), fill = if (active) Palette.BRASS else Palette.CREAM_30)
+            // Reassigning layoutParams (rather than mutating width in place) triggers requestLayout() on its own.
+            dot.layoutParams = (dot.layoutParams as LinearLayout.LayoutParams).apply { width = if (active) dp(16) else dp(5) }
+        }
+    }
+    private fun tabButton(label: String, onClick: () -> Unit): TextView = text(14f, label, Palette.CREAM_60).apply {
+        setPadding(dp(14), dp(8), dp(14), dp(8))
+        isClickable = true
+        // Guards against a stale tap landing on a tab button that's fading out because a device sheet
+        // just opened over it (§ issue 1), or because the docked conversation overlay's state indicator
+        // now occupies the same corner (§ issue 8) — the strip is hidden, not merely dimmed, in both cases.
+        setOnClickListener { if (!sheetOpen && !conversationDocked) onClick() }
+    }
+    /** Hides/restores the settings gear, tab strip and page dots (§ issue 1): a [DeviceSheet] is drawn
+     *  on top of the pager but *below* this chrome (all three were added to root after the pager), so
+     *  without this an open sheet's own close button sits right under the gear, and a stale tap could
+     *  land on either. Fades over 200ms and, for the gear, also disables clicks once hidden so a tap
+     *  during/after the fade can never reach it. */
+    private fun setChromeVisible(visible: Boolean) {
+        val target = if (visible) 1f else 0f
+        settingsButton.isEnabled = visible
+        settingsButton.animate().alpha(target).setDuration(200).start()
+        dotsRow.animate().alpha(target).setDuration(200).start()
+        if (visible) {
+            if (pager.currentPage > 0) { tabStrip.visibility = View.VISIBLE; tabStrip.animate().alpha(1f).setDuration(200).start() }
+        } else {
+            tabStrip.animate().alpha(0f).setDuration(200).start()
+        }
     }
     private fun action(action: String) {
         if (action == AssistantService.STOP) { stopService(Intent(this, AssistantService::class.java)); return }
@@ -177,33 +284,31 @@ class MainActivity : Activity() {
         if (code == 10 && results.firstOrNull() == PackageManager.PERMISSION_GRANTED) action(pendingAction)
         else Toast.makeText(this, getString(R.string.toast_mic_permission_required), Toast.LENGTH_LONG).show()
     }
+    /** Refreshes [WeatherStore]'s cached [Forecast] (15 min cadence, matching the old single-current
+     * fetch) and pushes it to the clock mini text, WeatherPage and Landscape's weather scene. Reads
+     * [WeatherStore.forecast] after the attempt (rather than only this call's own result) so a stale
+     * but still-cached forecast keeps being shown across a single failed refresh, same as before. */
     private fun refreshWeather() {
         if (weatherInFlight) return
         weatherAt = SystemClock.elapsedRealtime()
         val lat = settings.get("latitude").toDoubleOrNull(); val lon = settings.get("longitude").toDoubleOrNull()
-        if (lat == null || lon == null) { weather.text = getString(R.string.weather_placeholder_not_set); return }
+        if (lat == null || lon == null) { clockPage.bind(null, false); weatherPage.bind(null, false); return }
         weatherInFlight = true
-        val place = settings.get("location", getString(R.string.weather_default_place))
         worker.execute {
-            var fetchedScene: WeatherScene? = null
-            val result = runCatching {
-                val current = weatherClient.weather(lat, lon).getJSONObject("current")
-                val code = current.getInt("weather_code")
-                val isDay = current.optInt("is_day", 1) == 1
-                fetchedScene = WeatherScene.of(code, isDay)
-                val sky = getString(skyLabelRes(code))
-                getString(R.string.weather_summary_format, place, current.getDouble("temperature_2m").toString(), sky,
-                    current.getString("time").replace('T', ' '))
-            }.getOrElse { getString(R.string.weather_fetch_failed) }
+            val result = runCatching { WeatherStore.current(client, lat, lon, SystemClock.elapsedRealtime()) }
             main.post {
                 weatherInFlight = false
-                if (!isDestroyed && settings.get("latitude").toDoubleOrNull() == lat && settings.get("longitude").toDoubleOrNull() == lon) {
-                    weather.text = result
-                    // Leave the scene unchanged on failure; only update it once a fetch actually succeeded.
-                    // Debug-only: `adb shell setprop debug.butler.scene <SCENE>` overrides it for on-device checks.
-                    val applied = debugSceneOverride()?.also { landscape.debugForceWeather = true } ?: fetchedScene
-                    applied?.let { scene = it; landscape.scene = it }
-                }
+                if (isDestroyed) return@post
+                if (settings.get("latitude").toDoubleOrNull() != lat || settings.get("longitude").toDoubleOrNull() != lon) return@post
+                val forecast = WeatherStore.forecast
+                val failed = result.isFailure
+                clockPage.bind(forecast, failed)
+                weatherPage.bind(forecast, failed)
+                // Leave the scene unchanged when nothing could be fetched at all; only update it once a
+                // forecast (this attempt's or an earlier cached one) is actually available.
+                val applied = debugSceneOverride()?.also { landscape.debugForceWeather = true }
+                    ?: forecast?.let { WeatherScene.of(it.currentCode, it.isDay) }
+                applied?.let { scene = it; landscape.scene = it }
             }
         }
     }
@@ -218,17 +323,14 @@ class MainActivity : Activity() {
         val prop = Class.forName("android.os.SystemProperties").getMethod("get", String::class.java).invoke(null, "debug.butler.minute") as String
         prop.toIntOrNull()
     }.getOrNull()
-    /** Mirrors the sky-text mapping used by [WeatherScene.of]. */
-    private fun skyLabelRes(code: Int): Int = when (code) {
-        0 -> R.string.weather_sky_clear
-        1, 2 -> R.string.weather_sky_partly_cloudy
-        3 -> R.string.weather_sky_cloudy
-        45, 48 -> R.string.weather_sky_fog
-        in 51..67, in 80..82 -> R.string.weather_sky_rain
-        in 71..77, 85, 86 -> R.string.weather_sky_snow
-        in 95..99 -> R.string.weather_sky_thunder
-        else -> R.string.weather_sky_default
-    }
+    // Debug-only (§ issue 8): `adb shell setprop debug.butler.talk 1|2` drives the conversation overlay
+    // with a fake exchange so both its full and docked layouts can be checked on-device without a real
+    // conversation (the overlay itself can't otherwise be exercised outside a live session). 1 = full
+    // overlay; 2 = docked, also switching the pager to the weather page like the real auto-switch (§9).
+    private fun debugTalkOverride(): Int? = if (!BuildConfig.DEBUG) null else runCatching {
+        val prop = Class.forName("android.os.SystemProperties").getMethod("get", String::class.java).invoke(null, "debug.butler.talk") as String
+        prop.toIntOrNull()?.takeIf { it == 1 || it == 2 }
+    }.getOrNull()
     private fun showApproval() {
         val item = AssistantService.approval ?: return
         val id = item.optString("id")
@@ -256,5 +358,12 @@ class MainActivity : Activity() {
         if (column.childCount == 0) column.addView(text(15f, getString(R.string.sources_empty)))
         AlertDialog.Builder(this).setTitle(getString(R.string.sources_title)).setView(ScrollView(this).apply { addView(column) })
             .setPositiveButton(getString(R.string.dialog_close), null).show()
+    }
+    private companion object {
+        const val AUTO_RETURN_MS = 3 * 60 * 1000L
+        // Debug-only fake conversation content for `debug.butler.talk` (§ issue 8) — never shown to real
+        // users, so plain literals rather than string resources match the other debug.butler.* overrides.
+        const val DEBUG_FAKE_USER_TRANSCRIPT = "今日の天気は？"
+        const val DEBUG_FAKE_TRANSCRIPT = "今日は一日雨で、最高24℃、最低20℃。午後は降水確率90%です。"
     }
 }

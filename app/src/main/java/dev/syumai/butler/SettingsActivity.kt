@@ -5,12 +5,10 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.content.res.ColorStateList
 import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
-import android.graphics.drawable.RippleDrawable
 import android.net.Uri
 import android.os.Bundle
 import android.text.InputType
@@ -55,21 +53,6 @@ class SettingsActivity : Activity() {
     private val dimText = Color.argb(191, 245, 239, 227) // ~75% of textColor
     private val mutedRed = Color.parseColor("#B85C5C")
     private val chipDarkText = Color.parseColor("#102326")
-    private val deviceKindStrings = mapOf(
-        "light" to R.string.device_kind_light, "switch" to R.string.device_kind_switch, "climate" to R.string.device_kind_climate,
-        "fan" to R.string.device_kind_fan, "cover" to R.string.device_kind_cover, "lock" to R.string.device_kind_lock,
-        "media_player" to R.string.device_kind_media_player, "humidifier" to R.string.device_kind_humidifier,
-        "vacuum" to R.string.device_kind_vacuum, "scene" to R.string.device_kind_scene, "script" to R.string.device_kind_script,
-        "input_boolean" to R.string.device_kind_input_boolean,
-    )
-    private val deviceStateStrings = mapOf(
-        "cool" to R.string.device_state_cool, "heat" to R.string.device_state_heat, "dry" to R.string.device_state_dry,
-        "fan_only" to R.string.device_state_fan_only, "auto" to R.string.device_state_auto, "heat_cool" to R.string.device_state_heat_cool,
-        "open" to R.string.device_state_open, "closed" to R.string.device_state_closed, "opening" to R.string.device_state_opening,
-        "closing" to R.string.device_state_closing, "locked" to R.string.device_state_locked, "unlocked" to R.string.device_state_unlocked,
-        "playing" to R.string.device_state_playing, "paused" to R.string.device_state_paused, "idle" to R.string.device_state_idle,
-        "standby" to R.string.device_state_standby, "unavailable" to R.string.device_state_unavailable, "unknown" to R.string.device_state_unknown,
-    )
 
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
@@ -90,16 +73,8 @@ class SettingsActivity : Activity() {
 
     override fun onPause() { applyServiceState(); super.onPause() }
 
-    private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
-    private fun text(size: Float, value: String = "") = TextView(this).apply { textSize = size; text = value; setTextColor(textColor) }
-
-    /** Rounded-rect shape used as both a background and its ripple mask. */
-    private fun roundedShape(radius: Float, fill: Int = Color.WHITE, strokeColor: Int? = null, strokeWidth: Int = 0) = GradientDrawable().apply {
-        shape = GradientDrawable.RECTANGLE; cornerRadius = radius
-        if (strokeColor != null) { setColor(Color.TRANSPARENT); setStroke(strokeWidth, strokeColor) } else setColor(fill)
-    }
-    private fun rippleOn(content: Drawable?, radius: Float, rippleColor: Int) =
-        RippleDrawable(ColorStateList.valueOf(rippleColor), content, roundedShape(radius))
+    // dp/text/roundedShape/rippleOn moved to Ui.kt (shared with MainActivity); text()'s default
+    // color there is Palette.CREAM, the same value textColor holds.
     private fun themeDrawable(attr: Int): Drawable {
         val out = TypedValue(); theme.resolveAttribute(attr, out, true); return getDrawable(out.resourceId)!!
     }
@@ -226,29 +201,12 @@ class SettingsActivity : Activity() {
         dialog.show()
     }
 
-    private fun kindLabel(type: String): String = deviceKindStrings[type]?.let { getString(it) } ?: type
+    // kindLabel/stateLabel (and the device kind/state string maps and climate temperature
+    // formatting behind them) moved to DeviceText.kt so the smart-home/music pages describe a
+    // device the same way this dialog does.
+    private fun kindLabel(type: String): String = DeviceText.kindLabel(this, type)
 
-    /** Formats a temperature-like number without a trailing ".0" (e.g. 24.0 -> "24", 24.5 -> "24.5"), or null when [value] is NaN. */
-    private fun formatTemp(value: Double): String? {
-        if (value.isNaN()) return null
-        return if (value == Math.floor(value)) value.toLong().toString() else value.toString()
-    }
-
-    /** Localized state label for a device chip, with current/target temperature appended for climate entities. */
-    private fun stateLabel(type: String, state: String, attributes: JSONObject?): String {
-        val key = deviceStateKey(type, state)
-        var label = when (key) {
-            "on" -> getString(if (type == "light") R.string.device_state_light_on else R.string.device_state_on)
-            "off" -> getString(if (type == "light") R.string.device_state_light_off else R.string.device_state_off)
-            "raw" -> state
-            else -> deviceStateStrings[key]?.let { getString(it) } ?: state
-        }
-        if (type == "climate" && attributes != null) {
-            formatTemp(attributes.optDouble("current_temperature", Double.NaN))?.let { label += " · " + getString(R.string.device_state_current_temp, it) }
-            formatTemp(attributes.optDouble("temperature", Double.NaN))?.let { label += " · " + getString(R.string.device_state_target_temp, it) }
-        }
-        return label
-    }
+    private fun stateLabel(type: String, state: String, attributes: JSONObject?): String = DeviceText.stateLabel(this, type, state, attributes)
 
     /** A small rounded-pill TextView: filled with [fill] when given, otherwise outlined with [stroke]. */
     private fun chip(label: String, contentColor: Int, fill: Int? = null, stroke: Int = dimStroke) = TextView(this).apply {

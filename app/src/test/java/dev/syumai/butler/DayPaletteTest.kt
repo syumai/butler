@@ -12,7 +12,6 @@ class DayPaletteTest {
             val at = DayPalette.at(minute)
             assertArrayEquals("sky at $minute", palette.sky, at.sky)
             assertEquals("sun at $minute", palette.sun, at.sun)
-            assertArrayEquals("ridges at $minute", palette.ridges, at.ridges)
         }
     }
     @Test fun midpointIsPerChannelAverage() {
@@ -21,27 +20,25 @@ class DayPaletteTest {
         val mid = DayPalette.at(420) // 07:00, halfway between 06:00 and 08:00
         assertArrayEquals(IntArray(3) { avgColor(dawn.sky[it], morning.sky[it]) }, mid.sky)
         assertEquals(avgColor(dawn.sun, morning.sun), mid.sun)
-        assertArrayEquals(IntArray(3) { avgColor(dawn.ridges[it], morning.ridges[it]) }, mid.ridges)
     }
     @Test fun lateAndEarlyHoursAreNight() {
         val night = DayPalette.keyframes.first { it.first == 0 }.second
         val at23 = DayPalette.at(23 * 60)
         val at2 = DayPalette.at(2 * 60)
-        assertArrayEquals(night.sky, at23.sky); assertEquals(night.sun, at23.sun); assertArrayEquals(night.ridges, at23.ridges)
-        assertArrayEquals(night.sky, at2.sky); assertEquals(night.sun, at2.sun); assertArrayEquals(night.ridges, at2.ridges)
+        assertArrayEquals(night.sky, at23.sky); assertEquals(night.sun, at23.sun)
+        assertArrayEquals(night.sky, at2.sky); assertEquals(night.sun, at2.sun)
     }
     @Test fun everyMinuteIsFullyOpaque() {
         for (minute in 0 until 1440) {
             val p = DayPalette.at(minute)
             for (c in p.sky) assertEquals(0xFF, (c ushr 24) and 0xFF)
             assertEquals(0xFF, (p.sun ushr 24) and 0xFF)
-            for (c in p.ridges) assertEquals(0xFF, (c ushr 24) and 0xFF)
         }
     }
     @Test fun outOfRangeWraps() {
         val at0 = DayPalette.at(0); val at1440 = DayPalette.at(1440)
-        assertArrayEquals(at0.sky, at1440.sky); assertEquals(at0.sun, at1440.sun); assertArrayEquals(at0.ridges, at1440.ridges)
+        assertArrayEquals(at0.sky, at1440.sky); assertEquals(at0.sun, at1440.sun)
         val at1380 = DayPalette.at(1380); val atNeg60 = DayPalette.at(-60)
-        assertArrayEquals(at1380.sky, atNeg60.sky); assertEquals(at1380.sun, atNeg60.sun); assertArrayEquals(at1380.ridges, atNeg60.ridges)
+        assertArrayEquals(at1380.sky, atNeg60.sky); assertEquals(at1380.sun, atNeg60.sun)
     }
 }

@@ -113,12 +113,13 @@ class HomeAssistantTest {
 
     @Test fun parseStatesIncludesAttributesViaDeviceStateJson() {
         val states = JSONArray().put(entityWithAttributes("climate.living", "リビング エアコン", "cool",
-            JSONObject().put("current_temperature", 24).put("supported_features", 383), "リビングルーム"))
+            JSONObject().put("current_temperature", 24).put("supported_features", 383).put("icon", "mdi:thermostat"), "リビングルーム"))
         val result = parseStates(states)
         val device = result.getJSONArray("devices").getJSONObject(0)
         assertEquals("リビングルーム", device.getString("area"))
         assertEquals(24, device.getJSONObject("attributes").getInt("current_temperature"))
-        assertFalse(device.getJSONObject("attributes").has("supported_features"))
+        assertEquals(383, device.getJSONObject("attributes").getInt("supported_features"))
+        assertFalse(device.getJSONObject("attributes").has("icon"))
     }
 
     // --- normalizeDeviceName / deviceMatchScore / resolveDevices ---
@@ -268,14 +269,15 @@ class HomeAssistantTest {
     @Test fun resolveDevicesClimateAttributeWhitelist() {
         val states = JSONArray().put(entityWithAttributes("climate.test", "テストエアコン", "cool",
             JSONObject().put("current_temperature", 24).put("temperature", 26).put("hvac_action", "cooling")
-                .put("fan_mode", "auto").put("supported_features", 383)))
+                .put("fan_mode", "auto").put("supported_features", 383).put("icon", "mdi:thermostat")))
         val result = resolveDevices(states, "climate.test")
         val attrs = result.getJSONArray("devices").getJSONObject(0).getJSONObject("attributes")
         assertEquals(24, attrs.getInt("current_temperature"))
         assertEquals(26, attrs.getInt("temperature"))
         assertEquals("cooling", attrs.getString("hvac_action"))
         assertEquals("auto", attrs.getString("fan_mode"))
-        assertFalse(attrs.has("supported_features"))
+        assertEquals(383, attrs.getInt("supported_features"))
+        assertFalse(attrs.has("icon"))
     }
 
     @Test fun resolveDevicesLightBrightnessPercent() {
@@ -482,10 +484,42 @@ class HomeAssistantTest {
             "set_hvac_mode" -> "cool"
             "set_fan_mode", "set_swing_mode" -> "auto"
             "set_temperature" -> "26"
+            "set_color_temp" -> "2700"
             else -> "50"
         }
         for ((domain, actions) in DEVICE_ACTIONS) for (action in actions) {
             assertNotNull("$domain/$action should produce a service call", serviceFor(domain, action, testValue(action), null))
         }
+    }
+
+    @Test fun serviceForLightSetColorTemp() {
+        val call = serviceFor("light", "set_color_temp", "2700", null)
+        assertEquals("light", call!!.domain)
+        assertEquals("turn_on", call.service)
+        assertEquals(2700, call.data.getInt("color_temp_kelvin"))
+    }
+
+    @Test fun serviceForLightSetColorTempOutOfRange() {
+        assertNull(serviceFor("light", "set_color_temp", "500", null))
+    }
+
+    @Test fun serviceForLightSetColorTempNotANumber() {
+        assertNull(serviceFor("light", "set_color_temp", "abc", null))
+    }
+
+    @Test fun deviceStateJsonIncludesNewAttributes() {
+        val entity = entity("climate.living_room", "リビング エアコン").put("attributes", JSONObject()
+            .put("friendly_name", "リビング エアコン")
+            .put("min_temp", 16).put("max_temp", 30)
+            .put("fan_modes", JSONArray().put("auto").put("low").put("high"))
+            .put("entity_picture", "/api/media_player_proxy/media_player.living_room?token=abc")
+            .put("media_artist", "Some Artist"))
+        val json = deviceStateJson(entity)
+        val attributes = json.getJSONObject("attributes")
+        assertEquals(16, attributes.getInt("min_temp"))
+        assertEquals(30, attributes.getInt("max_temp"))
+        assertEquals(3, attributes.getJSONArray("fan_modes").length())
+        assertEquals("/api/media_player_proxy/media_player.living_room?token=abc", attributes.getString("entity_picture"))
+        assertEquals("Some Artist", attributes.getString("media_artist"))
     }
 }

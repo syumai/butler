@@ -8,6 +8,7 @@ import android.graphics.Color
 import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.RadialGradient
 import android.graphics.RectF
 import android.graphics.Shader
 import android.os.SystemClock
@@ -22,12 +23,12 @@ import kotlin.random.Random
 // mismatched tilt/drift produced before).
 private const val RAIN_SLANT = -0.12f
 
-/** Original code-drawn landscape; users can replace it with a local photograph, or with a weather-linked
+/** Original code-drawn sky background; users can replace it with a local photograph, or with a weather-linked
  *  animated scene. Animation runs only while the view is attached, its window is visible, and the current
  *  scene has motion (anything but DEFAULT/CLEAR_DAY, see [updateAnimating]) — capped at ~25 fps via
  *  `postInvalidateDelayed(40)` from onDraw and timed off `SystemClock.uptimeMillis()`, which is cheap
  *  enough for the target device (960x480, 32-bit ARM, weak CPU). The default illustration's
- *  palette (sky/sun/ridge colors only — geometry is unchanged) follows the time of day via [DayPalette]
+ *  palette (sky/sun colors only — geometry is unchanged) follows the time of day via [DayPalette]
  *  and [minuteOfDay]; the weather-scene and imported-photo paths are unaffected. */
 internal class Landscape(context: Context, file: File, private val settings: Settings) : View(context) {
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -81,22 +82,18 @@ internal class Landscape(context: Context, file: File, private val settings: Set
             canvas.drawBitmap(it, null, RectF((w-bw)/2, (h-bh)/2, (w+bw)/2, (h+bh)/2), paint); return
         }
         val palette = DayPalette.at(minuteOfDay)
-        paint.shader = LinearGradient(0f, 0f, w, h, palette.sky, null, Shader.TileMode.CLAMP)
+        // Vertical gradient (top -> horizon), not diagonal: matches the sky-only redesign (§7 of the
+        // UI redesign spec), which drops the ridge illustration entirely.
+        paint.shader = LinearGradient(0f, 0f, 0f, h, palette.sky, null, Shader.TileMode.CLAMP)
         canvas.drawRect(0f, 0f, w, h, paint); paint.shader = null
-        paint.color = palette.sun; canvas.drawCircle(w*.78f, h*.28f, h*.105f, paint)
-        fun ridge(color: Int, base: Float, peak: Float, shift: Float) {
-            paint.color = color
-            val p = Path().apply { moveTo(0f, h*base); cubicTo(w*.25f, h*(base-.12f), w*(.42f+shift), h*peak, w*.67f, h*(base-.08f)); cubicTo(w*.84f, h*(base+.1f), w*.9f, h*(peak+.1f), w, h*base); lineTo(w,h); lineTo(0f,h); close() }
-            canvas.drawPath(p, paint)
-        }
-        ridge(palette.ridges[0], .65f, .24f, .1f)
-        ridge(palette.ridges[1], .8f, .5f, -.15f)
-        ridge(palette.ridges[2], 1f, .56f, .2f)
+        val sunX = w * .78f; val sunY = h * .28f
+        drawGlow(canvas, paint, sunX, sunY, h, palette.sun)
+        paint.color = palette.sun; canvas.drawCircle(sunX, sunY, h * .07f, paint)
     }
     // Weather scenes are code-drawn. SceneArt holds the deterministic base geometry (rebuilt only when the
-    // scene or view size changes), a cached bitmap of the parts that never move (sky, sun/moon, ridges —
-    // the expensive anti-aliased Bezier fills, baked once instead of on every animation frame), a small
-    // rain output buffer, and a lightning flash schedule that update()/flashAt() mutate or read each frame.
+    // scene or view size changes), a cached bitmap of the parts that never move (sky, glow, sun/moon —
+    // baked once instead of on every animation frame), a small rain output buffer, and a lightning flash
+    // schedule that update()/flashAt() mutate or read each frame.
     // Everything else (cloud drift, star twinkle, snow fall, fog drift) is computed straight from that base
     // geometry and the elapsed time below — no allocation.
     private fun drawScene(canvas: Canvas, w: Float, h: Float) {
@@ -156,6 +153,19 @@ internal class Landscape(context: Context, file: File, private val settings: Set
     private fun wrap(value: Float, range: Float): Float { var v = value % range; if (v < 0) v += range; return v }
 }
 
+/** Soft radial glow behind the sun/moon (§7 of the UI redesign spec): a 3-stop [RadialGradient] centered
+ *  on the disc, drawn over the sky just before the small disc itself. Shared by the default illustration
+ *  (drawn fresh each call, same as its sky gradient) and [SceneArt] (baked once into its static bitmap). */
+private fun drawGlow(canvas: Canvas, paint: Paint, centerX: Float, centerY: Float, h: Float, color: Int) {
+    paint.shader = RadialGradient(centerX, centerY, h * .75f,
+        intArrayOf(colorWithAlpha(color, 0x66), colorWithAlpha(color, 0x1A), colorWithAlpha(color, 0)),
+        floatArrayOf(0f, .35f, 1f), Shader.TileMode.CLAMP)
+    canvas.drawRect(0f, 0f, canvas.width.toFloat(), canvas.height.toFloat(), paint)
+    paint.shader = null
+}
+private fun colorWithAlpha(color: Int, alpha: Int) = (color and 0x00FFFFFF) or (alpha shl 24)
+private val MOON_COLOR = 0xFFEFEFE0.toInt()
+
 /** Precomputed, deterministic geometry for one weather scene at one view size; rebuilt only on change.
  *  Also owns the tiny mutable state that animation needs: a shared sky [Shader] (created once instead of
  *  per frame), a rain-streak output buffer mutated by [update], and a lightning flash schedule read by
@@ -165,11 +175,10 @@ private class SceneArt(val scene: WeatherScene, val w: Float, val h: Float) {
     val createdAt = SystemClock.uptimeMillis()
     val sky: IntArray
     lateinit var skyShader: Shader
-    // Sky gradient, sun/moon and ridges never move once laid out — the ridges in particular are anti-
-    // aliased Bezier-path fills spanning most of the screen, the single biggest render cost on-device.
-    // Baking them into a bitmap once (here) instead of redrawing them on every ~40ms animation frame is
-    // what keeps the animated scenes cheap: Landscape.drawScene() just blits this bitmap, then draws only
-    // the parts that actually move (clouds, rain, snow, stars, fog, lightning) on top of it.
+    // Sky gradient, glow and sun/moon never move once laid out. Baking them into a bitmap once (here)
+    // instead of redrawing them on every ~40ms animation frame is what keeps the animated scenes cheap:
+    // Landscape.drawScene() just blits this bitmap, then draws only the parts that actually move
+    // (clouds, rain, snow, stars, fog, lightning) on top of it.
     lateinit var staticBitmap: Bitmap
     var sun: FloatArray? = null // cx, cy, r
     var sunColor = 0
@@ -190,11 +199,6 @@ private class SceneArt(val scene: WeatherScene, val w: Float, val h: Float) {
     private val fogMargin = w * .3f
     private val fogRange = w + fogMargin * 2f
     private val fogSpeed = w / 60_000f // px/ms
-    val ridges = mutableListOf<Path>()
-    val ridgeColors = mutableListOf<Int>()
-    val ridgeAlphas = mutableListOf<Int>()
-    val ridgeCaps = mutableListOf<Path?>()
-    var capColor = 0
     private var rainBaseX = FloatArray(0)
     private var rainBaseY = FloatArray(0)
     private var rainLen = FloatArray(0)
@@ -220,13 +224,6 @@ private class SceneArt(val scene: WeatherScene, val w: Float, val h: Float) {
         // Seeded by the scene so the same scene always lays out the same stars/clouds/rain (no flicker
         // across redraws) while different scenes still look distinct from each other.
         val rnd = Random(scene.ordinal * 97L + 13L)
-        val ridgeDefs = listOf(Triple(.65f, .24f, .1f), Triple(.8f, .5f, -.15f), Triple(1f, .56f, .2f))
-        fun ridgePath(base: Float, peak: Float, shift: Float) = Path().apply {
-            moveTo(0f, h * base)
-            cubicTo(w * .25f, h * (base - .12f), w * (.42f + shift), h * peak, w * .67f, h * (base - .08f))
-            cubicTo(w * .84f, h * (base + .1f), w * .9f, h * (peak + .1f), w, h * base)
-            lineTo(w, h); lineTo(0f, h); close()
-        }
         // Circle offsets relative to a cloud's own center (0,0); cy is absolute since clouds only drift in x.
         fun cloud(cy: Float, scale: Float) = listOf(
             floatArrayOf(0f, cy, .09f * h * scale),
@@ -248,14 +245,6 @@ private class SceneArt(val scene: WeatherScene, val w: Float, val h: Float) {
                 starPhase.add(rnd.nextFloat() * (Math.PI * 2).toFloat())
                 starFreq.add(.0015f + rnd.nextFloat() * .0025f) // ~2.5-4.2s twinkle period
             }
-        }
-        fun addRidges(colors: List<Int>, alphas: List<Int> = listOf(255, 255, 255), whiteCap: Boolean = false) {
-            ridgeDefs.forEachIndexed { i, (base, peak, shift) ->
-                ridges.add(ridgePath(base, peak, shift)); ridgeColors.add(colors[i]); ridgeAlphas.add(alphas[i])
-                // A thin sliver of the (lighter) cap path drawn just above the ridge peak reads as a snow cap.
-                ridgeCaps.add(if (whiteCap) ridgePath(peak + .03f, peak - .02f, shift) else null)
-            }
-            if (whiteCap) capColor = 0xCCF2F5F7.toInt()
         }
         fun addRain(count: Int) {
             // Three depth layers (far, mid, near): far streaks are short/thin/dim/slow, near streaks are
@@ -299,54 +288,45 @@ private class SceneArt(val scene: WeatherScene, val w: Float, val h: Float) {
         when (scene) {
             WeatherScene.CLEAR_DAY -> {
                 sky = intArrayOf(0xFF3E7BC4.toInt(), 0xFF7FB8D9.toInt(), 0xFFF2C879.toInt())
-                sun = floatArrayOf(w * .78f, h * .28f, h * .105f); sunColor = 0xFFE7D7A9.toInt()
-                addRidges(listOf(0xFF8FAE6E.toInt(), 0xFF5E8C4E.toInt(), 0xFF355B33.toInt()))
+                sun = floatArrayOf(w * .78f, h * .28f, h * .07f); sunColor = 0xFFE7D7A9.toInt()
             }
             WeatherScene.CLEAR_NIGHT -> {
                 sky = intArrayOf(0xFF060B1F.toInt(), 0xFF11213F.toInt(), 0xFF1C2F52.toInt())
-                moon = floatArrayOf(w * .76f, h * .24f, h * .085f)
+                moon = floatArrayOf(w * .76f, h * .24f, h * .07f)
                 addStars(24, h * .6f)
-                addRidges(listOf(0xFF2A3A5C.toInt(), 0xFF1B2740.toInt(), 0xFF0E1626.toInt()))
             }
             WeatherScene.PARTLY_CLOUDY_DAY -> {
                 sky = intArrayOf(0xFF3E7BC4.toInt(), 0xFF7FB8D9.toInt(), 0xFFF2C879.toInt())
-                sun = floatArrayOf(w * .78f, h * .28f, h * .105f); sunColor = 0xFFE7D7A9.toInt()
+                sun = floatArrayOf(w * .78f, h * .28f, h * .07f); sunColor = 0xFFE7D7A9.toInt()
                 addClouds(3, 0xDDEFEFEF.toInt())
-                addRidges(listOf(0xFF8FAE6E.toInt(), 0xFF5E8C4E.toInt(), 0xFF355B33.toInt()))
             }
             WeatherScene.PARTLY_CLOUDY_NIGHT -> {
                 sky = intArrayOf(0xFF060B1F.toInt(), 0xFF11213F.toInt(), 0xFF1C2F52.toInt())
-                moon = floatArrayOf(w * .76f, h * .24f, h * .085f)
+                moon = floatArrayOf(w * .76f, h * .24f, h * .07f)
                 addStars(16, h * .55f)
                 addClouds(3, 0xCC3A3F4A.toInt())
-                addRidges(listOf(0xFF2A3A5C.toInt(), 0xFF1B2740.toInt(), 0xFF0E1626.toInt()))
             }
             WeatherScene.CLOUDY -> {
                 sky = intArrayOf(0xFF7D8285.toInt(), 0xFF9AA0A2.toInt(), 0xFFB7BBBC.toInt())
                 addClouds(4, 0xEEDCDFE0.toInt())
-                addRidges(listOf(0xFF8A8F91.toInt(), 0xFF666B6D.toInt(), 0xFF454A4C.toInt()))
             }
             WeatherScene.FOG -> {
                 sky = intArrayOf(0xFFCED4D5.toInt(), 0xFFDBE0E1.toInt(), 0xFFE7EAEA.toInt())
                 fogBand = true
-                addRidges(listOf(0xFFB9C0C2.toInt(), 0xFFB9C0C2.toInt(), 0xFFB9C0C2.toInt()), listOf(220, 150, 90))
             }
             WeatherScene.RAIN -> {
                 sky = intArrayOf(0xFF232E38.toInt(), 0xFF34434F.toInt(), 0xFF44545F.toInt())
                 addClouds(3, 0xEE2C343B.toInt())
-                addRidges(listOf(0xFF3A5A5C.toInt(), 0xFF25403F.toInt(), 0xFF142B2A.toInt()))
                 addRain(60)
             }
             WeatherScene.SNOW -> {
                 sky = intArrayOf(0xFFB9C4D0.toInt(), 0xFFCBD5DE.toInt(), 0xFFDCE4EA.toInt())
                 addClouds(3, 0xEEE9EEF2.toInt())
-                addRidges(listOf(0xFF6E7B8C.toInt(), 0xFF4F5A6B.toInt(), 0xFF37404E.toInt()), whiteCap = true)
                 addSnow(50)
             }
             WeatherScene.THUNDER -> {
                 sky = intArrayOf(0xFF0C0E14.toInt(), 0xFF14161F.toInt(), 0xFF1B1E2A.toInt())
                 addClouds(4, 0xF01A1D24.toInt())
-                addRidges(listOf(0xFF23262E.toInt(), 0xFF16181D.toInt(), 0xFF0A0B0E.toInt()))
                 addRain(45)
                 lightning = Path().apply {
                     val x = w * .4f
@@ -360,19 +340,28 @@ private class SceneArt(val scene: WeatherScene, val w: Float, val h: Float) {
             }
             WeatherScene.DEFAULT -> sky = intArrayOf(0xFF254C50.toInt(), 0xFF81988D.toInt(), 0xFFE7BF8D.toInt()) // unused: caller skips DEFAULT
         }
-        skyShader = LinearGradient(0f, 0f, w, h, sky, null, Shader.TileMode.CLAMP)
-        // Bake the never-moving parts (sky, sun/moon, ridges) into a bitmap once; see the field doc above.
+        skyShader = LinearGradient(0f, 0f, 0f, h, sky, null, Shader.TileMode.CLAMP) // vertical: top -> horizon
+        // Bake the never-moving parts (sky, glow, sun/moon) into a bitmap once; see the field doc above.
         staticBitmap = Bitmap.createBitmap(maxOf(1, w.toInt()), maxOf(1, h.toInt()), Bitmap.Config.ARGB_8888).also { bmp ->
             val c = Canvas(bmp); val sp = Paint(Paint.ANTI_ALIAS_FLAG)
             sp.shader = skyShader; c.drawRect(0f, 0f, w, h, sp); sp.shader = null
-            sun?.let { sp.color = sunColor; c.drawCircle(it[0], it[1], it[2], sp) }
-            moon?.let { m ->
-                sp.color = 0xFFEFEFE0.toInt(); c.drawCircle(m[0], m[1], m[2], sp)
-                sp.color = sky[0]; c.drawCircle(m[0] + m[2] * .5f, m[1] - m[2] * .3f, m[2] * .92f, sp)
-            }
-            for (i in ridges.indices) {
-                ridgeCaps[i]?.let { sp.color = capColor; c.drawPath(it, sp) }
-                sp.color = ridgeColors[i]; sp.alpha = ridgeAlphas[i]; c.drawPath(ridges[i], sp)
+            val localSun = sun; val localMoon = moon
+            if (localSun != null) drawGlow(c, sp, localSun[0], localSun[1], h, sunColor)
+            else if (localMoon != null) drawGlow(c, sp, localMoon[0], localMoon[1], h, MOON_COLOR)
+            localSun?.let { sp.color = sunColor; c.drawCircle(it[0], it[1], it[2], sp) }
+            // Crescent (issue 7): used to draw the moon as a full disc, then paint a flat sky[0]-colored
+            // circle over part of it to "cut" a crescent shape. That flat color no longer matches what's
+            // actually behind the moon now that drawGlow() paints a radial glow there first, so the cut
+            // showed up as an opaque dark disc sitting on top of the glow instead of blending into it.
+            // Building the crescent as a single Path (moon minus the offset circle, via DIFFERENCE) and
+            // filling only that leaves the cut-out region untouched — whatever was already drawn there
+            // (the glow) stays visible, exactly like a real crescent.
+            localMoon?.let { m ->
+                sp.color = MOON_COLOR
+                val crescent = Path().apply { addCircle(m[0], m[1], m[2], Path.Direction.CW) }
+                val cut = Path().apply { addCircle(m[0] + m[2] * .5f, m[1] - m[2] * .3f, m[2] * .92f, Path.Direction.CW) }
+                crescent.op(cut, Path.Op.DIFFERENCE)
+                c.drawPath(crescent, sp)
             }
         }
     }

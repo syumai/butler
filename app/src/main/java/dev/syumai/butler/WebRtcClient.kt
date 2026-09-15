@@ -36,7 +36,12 @@ class RealtimeSignaling(private val context: Context, private val settings: Sett
             .put("output_modalities", JSONArray().put("audio"))
             .put("instructions", context.getString(R.string.prompt_realtime_instructions) + "\n\n" + SessionContext.text(context, settings))
             .put("audio", JSONObject().put("output", JSONObject().put("voice", settings.voice(VoiceApi.REALTIME).id))
-                .put("input", JSONObject().put("turn_detection", JSONObject().put("type", "semantic_vad").put("create_response", true).put("interrupt_response", true))))
+                .put("input", JSONObject().put("turn_detection", JSONObject().put("type", "semantic_vad").put("create_response", true).put("interrupt_response", true))
+                    // Streams conversation.item.input_audio_transcription.delta/.completed events (§9,
+                    // AssistantService.userTranscript) so the conversation overlay can show what the user
+                    // is saying, not just the assistant's reply. Verified 2026-09-16 against
+                    // https://developers.openai.com/api/docs/guides/realtime-transcription.
+                    .put("transcription", JSONObject().put("model", "gpt-live-transcribe"))))
         tools?.let { session.put("tools", it) }
         val body = MultipartBody.Builder().setType(MultipartBody.FORM).addFormDataPart("sdp", sdp)
             .addFormDataPart("session", session.toString()).build()

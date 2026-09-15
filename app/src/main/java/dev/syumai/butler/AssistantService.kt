@@ -13,10 +13,23 @@ class AssistantService : Service() {
     companion object {
         var status: Status = Status(R.string.status_mic_stopped); private set
         var transcript = ""; private set
+        /** The current user turn's speech-to-text, live-updated as the model transcribes it (§9); shown
+         * as the "you" caption line by ConversationView. Cleared at the start of each new user turn — see
+         * the Realtime/Live handling below — and whenever a conversation begins/ends. */
+        var userTranscript = ""; private set
         var citations = ""; private set
         var approval: JSONObject? = null; private set
         var conversing = false; private set
+        /** Set (main thread) just before a `get_home_weather` tool call runs, so MainActivity's tick can
+         * switch the pager to the matching page and dock the conversation overlay over it (§9). Only the
+         * serial needs to be observed for change; [viewRequest] itself doesn't reset between requests. */
+        var viewRequest = -1; private set
+        var viewRequestSerial = 0; private set
+        /** Bumped (main thread) whenever a device operation just completed, alongside [IdlePolicy.armShort]
+         * below — MainActivity's tick uses a change here to refresh SmartHomePage/MusicPage (§9). */
+        var homeStateSerial = 0; private set
         const val START = "start"; const val TALK = "talk"; const val END = "end"; const val STOP = "stop"
+        const val VIEW_WEATHER = 1
         /** After a device operation completes, how long to wait for the user to say anything else before
          * ending the conversation on its own (short-circuiting the normal, longer silence timeout). */
         private const val POST_ACTION_IDLE_MS = 5_000L
@@ -42,6 +55,11 @@ class AssistantService : Service() {
     private var liveAnnotations = JSONArray()
     /** The synthetic "document" whose text liveAnnotations' start/end indices point into (one line per citation). */
     private var liveCitationText = ""
+    /** True once an output_transcript delta has been seen for the current userTranscript; the next
+     * input_transcript delta after that is the start of a new user turn, so it clears userTranscript
+     * first instead of appending (Live has no explicit speech-started event to key off of, unlike
+     * Realtime's input_audio_buffer.speech_started). */
+    private var liveAwaitingNewUserTurn = false
     private var chimeOnReady = false
     private var startedAt = 0L
     private var busySince = 0L
@@ -131,7 +149,7 @@ class AssistantService : Service() {
             stopWake {
             preparing = false
             conversing = true
-            generation++; transcript = ""; citations = ""; approval = null
+            generation++; transcript = ""; userTranscript = ""; citations = ""; approval = null; liveAwaitingNewUserTurn = false
             live = settings.voiceApi == VoiceApi.LIVE
             state = ConversationState()
             liveState = LiveConversationState()
@@ -159,9 +177,12 @@ class AssistantService : Service() {
                 status = Status(R.string.status_please_speak)
             }
             "input_audio_buffer.speech_started" -> if (state.speechStarted()) {
+                userTranscript = ""
                 status = Status(R.string.status_listening); idle.update(SystemClock.elapsedRealtime(), true); idle.disarmShort()
             }
             "input_audio_buffer.speech_stopped" -> state.speechStopped()
+            "conversation.item.input_audio_transcription.delta" -> userTranscript = (userTranscript + e.optString("delta")).takeLast(4000)
+            "conversation.item.input_audio_transcription.completed" -> userTranscript = e.optString("transcript")
             "response.created" -> { idle.update(SystemClock.elapsedRealtime(), true); state.responseCreated(); transcript = ""; status = Status(R.string.status_responding) }
             "output_audio_buffer.started" -> state.audioStarted()
             "output_audio_buffer.stopped", "output_audio_buffer.cleared" -> {
@@ -192,7 +213,7 @@ class AssistantService : Service() {
                     // quickly (POST_ACTION_IDLE_MS) instead of waiting out the full silence timeout. Armed on
                     // the main thread (like every other idle access) and only for the current conversation.
                     if ((name == "control_devices" && result.optBoolean("done")) ||
-                        (name == "home_assistant" && result.optString("type") == "action_done")) idle.armShort()
+                        (name == "home_assistant" && result.optString("type") == "action_done")) { idle.armShort(); homeStateSerial++ }
                     citations = result.optJSONArray("content")?.toString() ?: ""
                     realtime?.send(JSONObject().put("type", "conversation.item.create").put("item", JSONObject()
                         .put("type", "function_call_output").put("call_id", callId).put("output", result.toString())))
@@ -257,6 +278,8 @@ class AssistantService : Service() {
                 if (BuildConfig.DEBUG) android.util.Log.i("Butler", "Live session ${e.optJSONObject("session")?.optString("id")}")
             }
             "session.input_transcript.delta" -> {
+                if (liveAwaitingNewUserTurn) { userTranscript = ""; liveAwaitingNewUserTurn = false }
+                userTranscript = (userTranscript + e.optString("delta")).takeLast(4000)
                 val now = SystemClock.elapsedRealtime()
                 liveState.userSpeech(now)
                 if (liveState.shouldNudge(now)) {
@@ -270,6 +293,7 @@ class AssistantService : Service() {
                 }
             }
             "session.output_transcript.delta" -> {
+                liveAwaitingNewUserTurn = true
                 liveState.assistantSpeech(SystemClock.elapsedRealtime())
                 transcript = (transcript + e.optString("delta")).takeLast(4000)
                 if (!liveState.ending) status = Status(R.string.status_responding)
@@ -339,7 +363,7 @@ class AssistantService : Service() {
         val id = generation
         runToolAsync(tool, name, item.optString("arguments"), id) { result ->
             if ((name == "control_devices" && result.optBoolean("done")) ||
-                (name == "home_assistant" && result.optString("type") == "action_done")) idle.armShort()
+                (name == "home_assistant" && result.optString("type") == "action_done")) { idle.armShort(); homeStateSerial++ }
             realtime?.send(JSONObject().put("type", "response.item.create").put("item", JSONObject()
                 .put("type", "function_call_output").put("call_id", callId).put("output", result.toString())))
             liveState.toolCallFinished(); maybeLiveFollowup()
@@ -348,6 +372,10 @@ class AssistantService : Service() {
     /** Runs a tool off the main thread and posts its result back on main, shared by the Realtime and
      * Live function-call dispatch paths (which differ only in the outer envelope they send it in). */
     private fun runToolAsync(tool: Tool?, name: String, argumentsJson: String, id: Int, onResult: (JSONObject) -> Unit) {
+        // Called on the main thread (both onEvent and onLiveFunctionCall run there), so this is set
+        // synchronously before the tool actually runs on the worker below — MainActivity's tick
+        // compares viewRequestSerial to switch the pager and dock the conversation overlay (§9).
+        if (name == "get_home_weather") { viewRequest = VIEW_WEATHER; viewRequestSerial++ }
         worker.execute {
             var args: JSONObject? = null
             val result = runCatching {
@@ -384,7 +412,7 @@ class AssistantService : Service() {
     }
     private fun finish(message: Status? = null) {
         generation++; preparing = false; conversing = false; client.cancel(); realtime?.close(); realtime = null
-        transcript = ""; citations = ""; approval = null; chimeOnReady = false
+        transcript = ""; userTranscript = ""; citations = ""; approval = null; chimeOnReady = false
         waitForWake(message)
     }
     override fun onDestroy() {
@@ -394,7 +422,7 @@ class AssistantService : Service() {
         val releaseModel = { kotlin.concurrent.thread(name = "Butler-release-model") { wakeModels.close() }; Unit }
         if (oldWake != null) oldWake.stop(releaseModel) else releaseModel()
         worker.shutdownNow(); wakeLock?.let { if (it.isHeld) it.release() }
-        transcript = ""; citations = ""; approval = null; chimeOnReady = false; status = Status(R.string.status_mic_stopped)
+        transcript = ""; userTranscript = ""; citations = ""; approval = null; chimeOnReady = false; status = Status(R.string.status_mic_stopped)
         super.onDestroy()
     }
 }

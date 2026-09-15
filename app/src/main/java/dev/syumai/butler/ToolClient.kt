@@ -45,8 +45,15 @@ class ToolClient {
         }
         return result.put("content", parts)
     }
-    fun weather(lat: Double, lon: Double): JSONObject = request(Request.Builder().url(
-        "https://api.open-meteo.com/v1/forecast?latitude=$lat&longitude=$lon&current=temperature_2m,weather_code,is_day&timezone=auto").build())
+    /** Current conditions plus yesterday/today/tomorrow daily highs/lows and 72h of hourly weather_code +
+     * precipitation_probability, for [Forecast.parse] ([WeatherStore]/`get_home_weather`). past_days=1 is what
+     * lets [Forecast] compute today's high/low change vs. yesterday. */
+    fun forecast(lat: Double, lon: Double): JSONObject = request(Request.Builder().url(
+        "https://api.open-meteo.com/v1/forecast?latitude=$lat&longitude=$lon" +
+            "&current=temperature_2m,weather_code,is_day" +
+            "&hourly=weather_code,precipitation_probability" +
+            "&daily=weather_code,temperature_2m_max,temperature_2m_min" +
+            "&past_days=1&forecast_days=2&timezone=auto").build())
     fun homeAssistant(settings: Settings, text: String, language: String): JSONObject {
         val body = JSONObject().put("text", text).put("language", language)
         val response = request(Request.Builder().url("${settings.get("haUrl")}/api/conversation/process")
@@ -172,6 +179,34 @@ class ToolClient {
         if (skipped.length() > 0) result.put("skipped", skipped)
         return result
     }
+
+    /** Calls the Home Assistant service for [action]/[value] on a single [entityId] directly (no resolution),
+     * for the on-screen smart-home/music pages, which already know the exact entity they're operating.
+     * [attributes] is the entity's raw attributes, forwarded to [serviceFor] to validate mode values against
+     * the entity's supported lists. Throws [IllegalArgumentException] when [action]/[value] can't be mapped to a
+     * service call for `entityId`'s domain, or on HTTP failure. */
+    fun homeAssistantCallService(settings: Settings, entityId: String, action: String, value: String?, attributes: JSONObject?) {
+        val domain = entityId.substringBefore(".")
+        val call = serviceFor(domain, action, value, attributes)
+            ?: throw IllegalArgumentException("Cannot map action \"$action\" for domain \"$domain\"")
+        val body = JSONObject(call.data.toString()).put("entity_id", entityId)
+        requestArray(Request.Builder().url("${settings.get("haUrl")}/api/services/${call.domain}/${call.service}")
+            .header("Authorization", "Bearer ${settings.secret("haToken")}")
+            .post(body.toString().toRequestBody("application/json".toMediaType())).build(), haHttp)
+    }
+
+    /** Fetches an image (e.g. `entity_picture`) from Home Assistant: [path] starting with "/" is resolved
+     * against `haUrl`, an absolute http(s) URL is used as-is. Returns the raw bytes (capped at 2 MB), or null on
+     * any failure (HTTP error, oversized response, network/parse error). */
+    fun homeAssistantImage(settings: Settings, path: String): ByteArray? = runCatching {
+        val url = if (path.startsWith("http://") || path.startsWith("https://")) path else "${settings.get("haUrl")}$path"
+        val request = Request.Builder().url(url).header("Authorization", "Bearer ${settings.secret("haToken")}").build()
+        haHttp.newCall(request).execute().use {
+            if (!it.isSuccessful) return@use null
+            val source = it.body!!.source()
+            if (source.request(2 * 1_048_576 + 1)) null else source.readByteArray()
+        }
+    }.getOrNull()
 }
 /** Pure parsing of a Home Assistant /api/conversation/process response into a compact model-facing result. */
 fun parseAssist(json: JSONObject): JSONObject {
@@ -225,6 +260,10 @@ val STATE_ATTRIBUTES = listOf(
     "fan_mode", "swing_mode", "preset_mode", "humidity", "current_humidity", "brightness", "color_temp_kelvin",
     "rgb_color", "percentage", "current_position", "volume_level", "media_title", "source", "battery_level",
     "unit_of_measurement", "device_class",
+    "min_temp", "max_temp", "target_temp_step", "fan_modes", "swing_modes", "supported_color_modes",
+    "min_color_temp_kelvin", "max_color_temp_kelvin", "media_artist", "media_album_name", "media_duration",
+    "media_position", "media_position_updated_at", "entity_picture", "is_volume_muted", "source_list",
+    "supported_features",
 )
 
 /** Builds the model-facing device object ({"name","id","type","state","area","attributes"}) from a raw
@@ -472,7 +511,7 @@ class ServiceCall(val domain: String, val service: String, val data: JSONObject)
 /** Actions the model may request per entity domain, in the order surfaced to callers (e.g. in an
  * unsupported_action result's "supported" list). */
 val DEVICE_ACTIONS: Map<String, List<String>> = mapOf(
-    "light" to listOf("turn_on", "turn_off", "toggle", "set_brightness"),
+    "light" to listOf("turn_on", "turn_off", "toggle", "set_brightness", "set_color_temp"),
     "switch" to listOf("turn_on", "turn_off", "toggle"),
     "input_boolean" to listOf("turn_on", "turn_off", "toggle"),
     "fan" to listOf("turn_on", "turn_off", "toggle", "set_speed"),
@@ -516,6 +555,10 @@ fun serviceFor(domain: String, action: String, value: String?, attributes: JSONO
         return Math.round(n).toInt().takeIf { it in 0..100 }
     }
     fun number(): Double? = value?.trim()?.toDoubleOrNull()
+    fun kelvin(): Int? {
+        val n = value?.trim()?.toDoubleOrNull() ?: return null
+        return Math.round(n).toInt().takeIf { it in 1000..10000 }
+    }
     fun mode(allowedKey: String): String? {
         val v = value?.trim()?.takeIf { it.isNotEmpty() } ?: return null
         val allowed = attributes?.optJSONArray(allowedKey) ?: return v
@@ -529,6 +572,7 @@ fun serviceFor(domain: String, action: String, value: String?, attributes: JSONO
             "turn_off" -> call("turn_off")
             "toggle" -> call("toggle")
             "set_brightness" -> percent()?.let { call("turn_on", JSONObject().put("brightness_pct", it)) }
+            "set_color_temp" -> kelvin()?.let { call("turn_on", JSONObject().put("color_temp_kelvin", it)) }
             else -> null
         }
         "switch", "input_boolean" -> when (action) {
