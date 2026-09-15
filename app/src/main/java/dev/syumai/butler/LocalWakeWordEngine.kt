@@ -51,8 +51,11 @@ object VoskWake {
 }
 
 /** Runs Vosk as a continuous small-vocabulary ASR restricted to the runtime grammar
- * `["<phrase>", "[unk]"]`, and reports a hit via [VoskWake.hit] on every partial/final result. Model
- * assets (`vosk/vosk-model-small-ja-0.22/` under `assets/`) are unpacked to `filesDir` on first use;
+ * `["<phrase>", "[unk]"]`, and reports a hit via [VoskWake.hit] on final results only. An offline eval
+ * on 2026-09-15 against ~92 minutes of unrelated Japanese speech found 25 false wakes, every one at the
+ * partial-result stage and none at the final-result stage, so partials are no longer checked; this costs
+ * roughly 1s of extra latency versus reacting to the first matching partial. Model assets
+ * (`vosk/vosk-model-small-ja-0.22/` under `assets/`) are unpacked to `filesDir` on first use;
  * `org.vosk.android.StorageService` is not used since it expects a `uuid` asset and the external
  * files dir, which don't fit this bundling. Japanese pronunciation only. */
 class VoskWakeDecoder(context: Context, phrase: WakePhrase) : WakeDecoder {
@@ -109,9 +112,8 @@ class VoskWakeDecoder(context: Context, phrase: WakePhrase) : WakeDecoder {
     }
 
     override fun accept(samples: ShortArray, count: Int): Boolean {
-        val ended = recognizer.acceptWaveForm(samples, count)
-        val json = if (ended) recognizer.result else recognizer.partialResult
-        if (VoskWake.hit(json, voskPhrase)) { recognizer.reset(); return true }
+        if (!recognizer.acceptWaveForm(samples, count)) return false
+        if (VoskWake.hit(recognizer.result, voskPhrase)) { recognizer.reset(); return true }
         return false
     }
     override fun restart() { recognizer.reset() }

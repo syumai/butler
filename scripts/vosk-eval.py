@@ -9,11 +9,14 @@ For each input file it prints:
   - every FINAL result, and every PARTIAL result that changed since the last
     one printed, each with a timestamp;
   - a summary: how many FINAL results contain the phrase as an adjacent word
-    run, how many *first* PARTIAL hits occurred (the earliest partial where
-    the adjacency rule first becomes true for a given utterance - the same
-    signal `VoskWakeDecoder.accept` reacts to on the device, reimplemented
-    here in Python rather than imported, since the app-side check is Kotlin),
-    and the decode wall time.
+    run - since 2026-09-15 this is the only signal `VoskWakeDecoder.accept`
+    reacts to on the device, after an offline eval found 25 false wakes in
+    ~92 minutes of unrelated Japanese speech, all of them at the partial
+    stage and none at the final stage - and how many *first* PARTIAL hits
+    occurred (the earliest partial where the adjacency rule first becomes
+    true for a given utterance; printed as a diagnostic only, since the app
+    no longer wakes on it), plus the decode wall time and a final-hits-per-
+    hour rate.
 
 Run with a venv that has the `vosk` package installed:
 
@@ -97,7 +100,9 @@ def evaluate(model: Model, pcm_path: Path, phrase: str, grammar: bool) -> None:
     print(f"   end FINAL   {text!r}")
     elapsed = time.time() - started
     audio_seconds = len(data) / 32000.0
-    print(f"summary: {final_hits} final hit(s), {first_partial_hits} first-partial hit(s), "
+    hits_per_hour = final_hits / (audio_seconds / 3600.0) if audio_seconds else 0.0
+    print(f"summary: {final_hits} final hit(s) [= app wakes] ({hits_per_hour:.1f}/hr), "
+          f"{first_partial_hits} first-partial hit(s) [diagnostic only], "
           f"decode {elapsed:.1f}s for {audio_seconds:.0f}s audio\n")
 
 
