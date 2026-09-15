@@ -8,6 +8,7 @@ local.properties
 *.jks
 .DS_Store
 app/src/main/assets/vosk/
+app/src/main/assets/julius/model/
 
 # Local logo studies
 docs/assets/variants/

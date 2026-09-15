@@ -380,6 +380,12 @@ class SettingsActivity : Activity() {
     private fun renderWake() {
         addSwitchRow(rightPane, getString(R.string.settings_row_wake_enabled), settings.enabled) { checked -> settings.enabled = checked; applyServiceState(); renderCategory(selected) }
         addRow(rightPane, getString(R.string.settings_row_wake_phrase), settings.wakePhrase.label, enabled = false)
+        addRow(rightPane, getString(R.string.settings_row_wake_engine), getString(settings.wakeEngine.labelRes)) {
+            val engines = WakeEngine.entries
+            showChoiceDialog(getString(R.string.settings_row_wake_engine), engines.map { getString(it.labelRes) }, engines.indexOf(settings.wakeEngine)) { which ->
+                settings.wakeEngine = engines[which]; applyServiceState(); renderCategory(selected)
+            }
+        }
     }
 
     private fun renderWeatherBackground() {

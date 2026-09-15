@@ -11,6 +11,24 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
+/** The on-device wake-word engine. Vosk (default) is a continuous small-vocabulary ASR restricted to a
+ * runtime grammar; Julius (experimental, off by default) is a phone-loop grammar decoder run as a child
+ * process. See `LocalWakeWordEngine.kt`'s `VoskWakeDecoder`/`JuliusWakeDecoder` and
+ * `third_party/julius/README.md` for the 2026-09-15 offline comparison that keeps Julius experimental. */
+enum class WakeEngine(val id: String, val labelRes: Int) {
+    VOSK("vosk", R.string.wake_engine_vosk),
+    JULIUS("julius", R.string.wake_engine_julius);
+
+    companion object {
+        val DEFAULT = VOSK
+        fun fromId(id: String?): WakeEngine {
+            val normalized = id?.trim()?.lowercase()
+            if (normalized.isNullOrBlank()) return DEFAULT
+            return entries.firstOrNull { it.id == normalized } ?: DEFAULT
+        }
+    }
+}
+
 class Settings(context: Context) {
     companion object {
         // Set by SettingsActivity after a change that MainActivity's home screen needs to reflect
@@ -22,7 +40,7 @@ class Settings(context: Context) {
     init {
         // Remove obsolete provider credentials and model after migration.
         prefs.edit().remove("picovoice").remove("sensitivity").remove("wakePhrase")
-            .remove("wakeThreshold").remove("wakeEngine").apply()
+            .remove("wakeThreshold").apply()
         File(context.filesDir, "butler.ppn").delete()
     }
     val background = File(context.filesDir, "background.jpg")
@@ -38,6 +56,11 @@ class Settings(context: Context) {
     // tried first but caused too many false wakes, so the longer Hello Butler phrase was adopted.
     // Vosk's Japanese model detects the Japanese pronunciation ("ハロー、バトラー") only.
     val wakePhrase get() = WakePhrase.HELLO_BUTLER
+    // Default is Vosk; Julius stays selectable in Settings -> Wake as an experimental alternative (see
+    // WakeEngine's doc comment for why it isn't the default).
+    var wakeEngine: WakeEngine
+        get() = WakeEngine.fromId(get("wakeEngine"))
+        set(value) = set("wakeEngine", value.id)
     val timeoutSeconds get() = get("timeout", "30").toLongOrNull()?.coerceIn(5, 600) ?: 30L
     val voice get() = Voice.fromId(get("voice"))
     /** Like [voice], but falls back to [api]'s default when the stored voice isn't valid for [api]. */

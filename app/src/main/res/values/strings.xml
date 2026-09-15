@@ -120,6 +120,9 @@
 
     <string name="settings_row_wake_enabled">Listen for wake phrase</string>
     <string name="settings_row_wake_phrase">Wake phrase</string>
+    <string name="settings_row_wake_engine">Wake engine</string>
+    <string name="wake_engine_vosk">Vosk</string>
+    <string name="wake_engine_julius">Julius (experimental)</string>
 
     <string name="settings_row_location_name">Region name</string>
     <string name="settings_row_latitude">Latitude</string>
@@ -188,7 +191,7 @@
     <string name="settings_row_app_info">App name and version</string>
     <string name="settings_app_info_format">%1$s · %2$s (%3$s)</string>
     <string name="settings_row_licenses">Third-party notices</string>
-    <string name="settings_licenses_body">Vosk (Apache-2.0)\nvosk-model-small-ja-0.22 (Apache-2.0)\nJNA (Apache-2.0)\nWebRTC\nOkHttp\nMaterial Icons (Apache-2.0)\nOpen-Meteo</string>
+    <string name="settings_licenses_body">Vosk (Apache-2.0)\nvosk-model-small-ja-0.22 (Apache-2.0)\nJulius (BSD-3-Clause)\nJulius Dictation Kit (see third_party/julius)\nJNA (Apache-2.0)\nWebRTC\nOkHttp\nMaterial Icons (Apache-2.0)\nOpen-Meteo</string>
     <string name="toast_background_changed">Changed the background image</string>
     <string name="toast_file_read_failed">Couldn\'t read the file (max 20MB)</string>
 

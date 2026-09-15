@@ -112,7 +112,7 @@ class AssistantService : Service() {
             if (!settings.enabled) { status = message ?: Status(R.string.status_mic_stopped); stopSelf(); return@stopWake }
             status = Status(R.string.status_preparing_wake)
             val id = wakeGeneration
-            wake = LocalWakeWordEngine(this, wakeModels, settings.wakePhrase,
+            wake = LocalWakeWordEngine(this, wakeModels, settings.wakePhrase, settings.wakeEngine,
                 ready = { if (id == wakeGeneration) status = message ?: Status(R.string.status_say_wake_phrase, settings.wakePhrase.label) },
                 detected = { if (id == wakeGeneration) { wake = null; begin(woken = true) } },
                 failed = { if (id == wakeGeneration) { wake = null; status = Status(R.string.status_wake_detect_failed) } })
