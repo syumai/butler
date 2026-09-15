@@ -229,8 +229,6 @@
     <string name="home_tab_smart_home">Smart home</string>
     <string name="home_tab_music">Music</string>
     <string name="home_date_pattern">MMM d (EEE)</string>
-    <string name="home_weather_mini_format">%1$s %2$s℃</string>
-    <string name="home_swipe_hint">Swipe ›</string>
     <string name="weather_table_time">Time</string>
     <string name="weather_table_precip">Rain</string>
     <string name="weather_block_0_6">0–6</string>

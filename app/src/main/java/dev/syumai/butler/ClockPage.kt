@@ -20,7 +20,8 @@ class ClockPage(context: Context) : FrameLayout(context) {
 
     private val clock: TextView
     private val date: TextView
-    private val weather: TextView
+    private val weatherEmoji: TextView
+    private val weatherTemp: TextView
     private val status: TextView
 
     // FrameLayout isn't a Context, so Ui.kt's `Context.dp()` extension needs an explicit receiver
@@ -44,21 +45,21 @@ class ClockPage(context: Context) : FrameLayout(context) {
         center.addView(date, LinearLayout.LayoutParams(-2, -2))
         addView(center, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER).apply { bottomMargin = dp(6) })
 
-        weather = context.text(18f, context.getString(R.string.weather_placeholder_not_set), Palette.CREAM_30).apply {
+        val weatherRow = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
             setOnClickListener { onWeatherTap?.invoke() }
         }
-        addView(weather, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.START).apply {
+        weatherEmoji = context.text(18f, "", Palette.CREAM_30).apply { visibility = GONE }
+        weatherRow.addView(weatherEmoji, LinearLayout.LayoutParams(-2, -2))
+        weatherTemp = context.text(18f, context.getString(R.string.weather_placeholder_not_set), Palette.CREAM_30)
+        weatherRow.addView(weatherTemp, LinearLayout.LayoutParams(-2, -2).apply { marginStart = dp(12) })
+        addView(weatherRow, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.START).apply {
             leftMargin = dp(34); topMargin = dp(22)
         })
 
         status = context.text(12f, "", Palette.CREAM_30).apply { visibility = GONE }
         addView(status, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.START).apply {
             leftMargin = dp(34); bottomMargin = dp(22)
-        })
-
-        val swipeHint = context.text(13f, context.getString(R.string.home_swipe_hint), Palette.CREAM_30)
-        addView(swipeHint, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.END).apply {
-            rightMargin = dp(30); bottomMargin = dp(22)
         })
     }
 
@@ -71,12 +72,14 @@ class ClockPage(context: Context) : FrameLayout(context) {
     fun bind(forecast: Forecast?, failed: Boolean) {
         if (forecast != null) {
             val scene = WeatherScene.of(forecast.currentCode, forecast.isDay)
-            val tempText = String.format(Locale.getDefault(), "%.1f", forecast.currentTemp)
-            weather.text = context.getString(R.string.home_weather_mini_format, WeatherFormat.emoji(scene), tempText)
-            weather.textSize = 18f; weather.setTextColor(Palette.CREAM_60)
+            weatherEmoji.text = WeatherFormat.emoji(scene)
+            weatherEmoji.textSize = 18f; weatherEmoji.setTextColor(Palette.CREAM_60); weatherEmoji.visibility = VISIBLE
+            weatherTemp.text = String.format(Locale.getDefault(), "%.1f℃", forecast.currentTemp)
+            weatherTemp.textSize = 18f; weatherTemp.setTextColor(Palette.CREAM_60)
         } else {
-            weather.text = context.getString(if (failed) R.string.weather_fetch_failed_short else R.string.weather_placeholder_not_set)
-            weather.textSize = 13f; weather.setTextColor(Palette.CREAM_30)
+            weatherEmoji.visibility = GONE
+            weatherTemp.text = context.getString(if (failed) R.string.weather_fetch_failed_short else R.string.weather_placeholder_not_set)
+            weatherTemp.textSize = 13f; weatherTemp.setTextColor(Palette.CREAM_30)
         }
     }
 

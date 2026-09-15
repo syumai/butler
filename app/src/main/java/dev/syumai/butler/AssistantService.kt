@@ -65,6 +65,9 @@ class AssistantService : Service() {
     private var busySince = 0L
     private var idle = IdlePolicy(30_000)
     private val handled = mutableSetOf<String>()
+    /** Debug-only (see docs/architecture.md): the last non-blank `debug.butler.say` value already
+     * injected as a user turn, so the ticker only acts on it once. Reset in [begin]. */
+    private var lastDebugSay = ""
     private val ticker = object : Runnable {
         override fun run() {
             if (realtime != null) {
@@ -72,6 +75,7 @@ class AssistantService : Service() {
                 val busy = if (live) liveState.busy(now) else state.busy
                 val ready = if (live) liveState.ready else state.ready
                 idle.update(now, busy)
+                if (BuildConfig.DEBUG && ready) checkDebugSay()
                 if (busy) { if (busySince == 0L) busySince = now } else busySince = 0
                 if ((!ready && now - startedAt > 30_000) || (busySince > 0 && now - busySince > 120_000)) finish(Status(R.string.status_timeout))
                 else if (idle.expired(now)) finish()
@@ -149,7 +153,7 @@ class AssistantService : Service() {
             stopWake {
             preparing = false
             conversing = true
-            generation++; transcript = ""; userTranscript = ""; citations = ""; approval = null; liveAwaitingNewUserTurn = false
+            generation++; transcript = ""; userTranscript = ""; citations = ""; approval = null; liveAwaitingNewUserTurn = false; lastDebugSay = ""
             live = settings.voiceApi == VoiceApi.LIVE
             state = ConversationState()
             liveState = LiveConversationState()
@@ -168,7 +172,40 @@ class AssistantService : Service() {
             }
         } catch (_: Exception) { finish(Status(R.string.status_connect_failed)) }
     }
+    /** Debug-only (see docs/architecture.md): reads `debug.butler.say` via reflection, same
+     * `SystemProperties.get` pattern as MainActivity's `debug.butler.*` overrides. Returns "" (never
+     * null) so blank and "property unset/unreadable" are the same "nothing pending" case. */
+    private fun debugSayProperty(): String = if (!BuildConfig.DEBUG) "" else runCatching {
+        Class.forName("android.os.SystemProperties").getMethod("get", String::class.java).invoke(null, "debug.butler.say") as String
+    }.getOrDefault("")
+    /** Debug-only hook (called from [ticker] once per tick while a conversation is active and its
+     * session is ready): `adb shell setprop debug.butler.say "<text>"` injects that text as the
+     * user's turn, so the conversation flow can be exercised from adb without a microphone. A blank
+     * property is "nothing pending" and also clears [lastDebugSay], so clearing the property and
+     * setting the same text again re-injects it. Realtime only — GPT-Live has no verified client
+     * event for injecting a text user turn, so the Live case just logs a warning. */
+    private fun checkDebugSay() {
+        val say = debugSayProperty()
+        if (say.isBlank()) { lastDebugSay = ""; return }
+        if (say == lastDebugSay) return
+        lastDebugSay = say
+        if (live) { android.util.Log.w("Butler", "debug.butler.say is not supported for the Live voice API; ignoring"); return }
+        android.util.Log.i("Butler", "debug say: $say")
+        userTranscript = say
+        val itemSent = realtime?.send(JSONObject().put("type", "conversation.item.create").put("item", JSONObject()
+            .put("type", "message").put("role", "user").put("content", JSONArray().put(JSONObject()
+                .put("type", "input_text").put("text", say)))))
+        val responseSent = realtime?.send(JSONObject().put("type", "response.create"))
+        android.util.Log.i("Butler", "debug say sent: item=$itemSent response=$responseSent")
+    }
     private fun onEvent(e: JSONObject) {
+        if (BuildConfig.DEBUG) e.optString("type").let { type ->
+            if (!type.endsWith(".delta")) android.util.Log.d("Butler", "rt " + when (type) {
+                "error" -> "$type ${e.optJSONObject("error")?.toString()?.take(300)}"
+                "response.done" -> "$type ${e.optJSONObject("response")?.optString("status")}"
+                else -> type
+            })
+        }
         when (e.optString("type")) {
             "session.created" -> realtime?.send(JSONObject().put("type", "session.update").put("session", JSONObject().put("type", "realtime").put("tools", registry.definitions())))
             "session.updated" -> if (state.sessionReady()) {

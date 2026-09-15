@@ -55,6 +55,9 @@ class MainActivity : Activity() {
     private var lastViewRequestSerial = 0
     private var lastHomeStateSerial = 0
     private var lastConversing = false
+    // Debug-only (see debugBeginOverride()): the last debug.butler.begin value already acted on, so a
+    // steady non-blank/non-"0" property value doesn't retrigger action(TALK) on every tick.
+    private var lastBeginActedOn: String? = null
     /** True while ConversationView is docked (§9/§8) — its state dot/text shares the tab strip's
      *  top-left corner, so the strip fades out for as long as this is true (§ issue 8). */
     private var conversationDocked = false
@@ -89,6 +92,14 @@ class MainActivity : Activity() {
             // overlay with a fake exchange (status_responding, a canned user/bot transcript, no citations)
             // so it can be screenshotted on-device without exercising a real conversation; 2 also docks
             // the overlay over the weather page, matching the real auto-switch (§9) it stands in for.
+            // Debug-only: `adb shell setprop debug.butler.begin 1` starts a real conversation exactly
+            // like the old on-screen Talk button (removed by the redesign), since the service isn't
+            // exported so `am start-foreground-service` from the shell is denied. Acts once per distinct
+            // non-blank/non-"0" value; set the property back to 0 before reusing the same value again.
+            val beginOverride = debugBeginOverride()
+            if (beginOverride.isNullOrBlank() || beginOverride == "0") lastBeginActedOn = null
+            else if (beginOverride != lastBeginActedOn) { lastBeginActedOn = beginOverride; action(AssistantService.TALK) }
+
             val talkOverride = debugTalkOverride()
             if (talkOverride != null) {
                 conversation.update(Status(R.string.status_responding), DEBUG_FAKE_USER_TRANSCRIPT, DEBUG_FAKE_TRANSCRIPT, "", false, true)
@@ -330,6 +341,11 @@ class MainActivity : Activity() {
     private fun debugTalkOverride(): Int? = if (!BuildConfig.DEBUG) null else runCatching {
         val prop = Class.forName("android.os.SystemProperties").getMethod("get", String::class.java).invoke(null, "debug.butler.talk") as String
         prop.toIntOrNull()?.takeIf { it == 1 || it == 2 }
+    }.getOrNull()
+    // Debug-only: `adb shell setprop debug.butler.begin <value>` — see the tick loop above for how the
+    // raw property value is turned into a one-shot action(TALK) call.
+    private fun debugBeginOverride(): String? = if (!BuildConfig.DEBUG) null else runCatching {
+        Class.forName("android.os.SystemProperties").getMethod("get", String::class.java).invoke(null, "debug.butler.begin") as String
     }.getOrNull()
     private fun showApproval() {
         val item = AssistantService.approval ?: return

@@ -20,20 +20,23 @@ import android.widget.TextView
  * whose value changed" pattern MainActivity itself used to use) and calls [setDocked] only on the
  * rarer occasions §9 describes (an auto-switch to a page underneath while a tool runs).
  *
- * Docked mode swaps the two-line centered caption for a small bottom bar and shrinks/moves the orb
- * to the bottom-left, while the radial background fades to fully transparent so the page underneath
- * shows through; both are driven by view-property/ValueAnimator animations over 300ms, matching the
- * show/hide fade.
+ * Docked mode swaps the two-line centered caption for a small bar along the TOP edge (where the tab
+ * strip normally sits — MainActivity hides that strip for as long as this is docked) and shrinks/
+ * moves the orb to the top-left, while the radial background fades to fully transparent so the page
+ * underneath shows through; both are driven by view-property/ValueAnimator animations over 300ms,
+ * matching the show/hide fade. The small state dot/text (top-left, same corner) is hidden outright
+ * while docked — the orb's own color already conveys listening/speaking — rather than trying to
+ * share the corner with the new docked bar.
  */
 class ConversationView(context: Context) : FrameLayout(context) {
     /** Set by MainActivity to AssistantService.END / showSources() / showApproval(). */
     var onEnd: (() -> Unit)? = null
     var onSources: (() -> Unit)? = null
     var onApprove: (() -> Unit)? = null
-    /** Set by MainActivity so it can hide its own top-left tab strip while docked (§ issue 8): docked
-     *  mode's state dot/text sits at the same 34dp/22dp top-left corner as the tab strip, and with the
-     *  background faded to transparent in that mode (see [animateBackgroundAlpha]) the two would
-     *  otherwise draw directly on top of each other, unreadable. */
+    /** Set by MainActivity so it can hide its own top-left tab strip while docked (§ issue 8): the
+     *  docked orb/bar now occupy that same top-edge real estate (34dp from the left, 10-66dp down),
+     *  and with the background faded to transparent in that mode (see [animateBackgroundAlpha]) the
+     *  two would otherwise draw directly on top of each other, unreadable. */
     var onDockedChanged: ((Boolean) -> Unit)? = null
 
     private fun dp(value: Int) = context.dp(value)
@@ -49,6 +52,9 @@ class ConversationView(context: Context) : FrameLayout(context) {
         background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Palette.TEAL) }
     }
     private val stateText = context.text(13f, "", Palette.CREAM_30)
+    // Field (not a local val in init) so setDocked can hide it outright while docked — the orb's
+    // color already conveys listening/speaking, and the docked bar now occupies this same corner.
+    private val stateRow = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
 
     private val orb = OrbView(context)
 
@@ -62,14 +68,18 @@ class ConversationView(context: Context) : FrameLayout(context) {
         addView(botText, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(8) })
     }
 
+    // Docked "bot" text uses ellipsize START (not END, unlike the single-line "you" text) so the
+    // newest words stay visible as the transcript grows past two lines, matching how a live caption
+    // should read; both need MATCH_PARENT width (rather than WRAP_CONTENT) so they actually wrap/
+    // ellipsize against dockedBar's fixed width instead of measuring themselves unbounded.
     private val dockedUserText = context.text(13f, "", Palette.CREAM_60).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END }
-    private val dockedBotText = context.text(16f, "", Palette.CREAM).apply { maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END }
+    private val dockedBotText = context.text(16f, "", Palette.CREAM).apply { maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.START }
     private val dockedBar = LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL
         background = roundedShape(dp(16).toFloat(), fill = 0xB30E2024.toInt())
-        setPadding(dp(14), dp(8), dp(14), dp(8))
-        addView(dockedUserText, LinearLayout.LayoutParams(-2, -2))
-        addView(dockedBotText, LinearLayout.LayoutParams(-2, -2))
+        setPadding(dp(14), dp(3), dp(14), dp(3))
+        addView(dockedUserText, LinearLayout.LayoutParams(-1, -2))
+        addView(dockedBotText, LinearLayout.LayoutParams(-1, -2))
         alpha = 0f; visibility = INVISIBLE
     }
 
@@ -95,15 +105,19 @@ class ConversationView(context: Context) : FrameLayout(context) {
         alpha = 0f
         visibility = INVISIBLE
 
-        val stateRow = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
         stateRow.addView(stateDot, LinearLayout.LayoutParams(dp(8), dp(8)))
         stateRow.addView(stateText, LinearLayout.LayoutParams(-2, -2).apply { marginStart = dp(8) })
         addView(stateRow, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.START).apply { leftMargin = dp(34); topMargin = dp(22) })
 
         addView(orb, FrameLayout.LayoutParams(dp(150), dp(150), Gravity.CENTER).apply { bottomMargin = dp(80) })
         addView(captionFull, FrameLayout.LayoutParams(dp(620), -2, Gravity.CENTER).apply { topMargin = dp(60) })
-        addView(dockedBar, FrameLayout.LayoutParams(-2, dp(56), Gravity.BOTTOM or Gravity.START).apply {
-            leftMargin = dp(34 + 56 + 12); rightMargin = dp(34 + 56 + 96); bottomMargin = dp(22)
+        // Docked bar (top-edge redesign): left edge just past the 48dp docked orb (34dp orb-left +
+        // 48dp orb + 12dp gap), right edge ~80dp short of the screen edge (16dp left of the 48dp
+        // settings gear, which itself sits 34dp from the edge), top margin 10dp. MATCH_PARENT width
+        // (rather than WRAP_CONTENT) makes those margins actually bound the bar's width so its text
+        // children can wrap/ellipsize instead of measuring themselves unbounded.
+        addView(dockedBar, FrameLayout.LayoutParams(-1, -2, Gravity.TOP or Gravity.START).apply {
+            leftMargin = dp(34 + 48 + 12); rightMargin = dp(80); topMargin = dp(10)
         })
 
         val controls = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
@@ -137,7 +151,11 @@ class ConversationView(context: Context) : FrameLayout(context) {
     fun update(status: Status, userTranscript: String, transcript: String, citations: String, approvalPending: Boolean, conversing: Boolean) {
         val wasShown = shown
         shown = conversing
-        if (conversing != wasShown) { if (conversing) { setDocked(false); setVisible(true) } else setVisible(false) }
+        // setDocked(false) unconditionally on either edge: a new conversation must never start docked
+        // (matches the old behavior), and — the bug this fixes — a conversation that *ends* while still
+        // docked (e.g. the end button tapped over the weather page) must undock too, so onDockedChanged
+        // fires and MainActivity re-shows its tab strip/gear/dots instead of leaving them hidden forever.
+        if (conversing != wasShown) { setDocked(false); setVisible(conversing) }
         // Stayed hidden this tick: skip the detail work below (mode/status/captions) — the weak
         // target device shouldn't pay for string formatting and view diffing while nothing is shown.
         if (!conversing && !wasShown) return
@@ -176,13 +194,17 @@ class ConversationView(context: Context) : FrameLayout(context) {
         animateBackgroundAlpha()
     }
 
-    /** Docked mode (§8): shrinks/moves the orb to the bottom-left, swaps the centered caption for a
-     * bottom bar, and fades the background to transparent so the page underneath reads through. */
+    /** Docked mode (§8): shrinks/moves the orb to the top-left, swaps the centered caption for a bar
+     * along the top edge (where the tab strip normally sits — MainActivity hides that strip via
+     * [onDockedChanged] for as long as this is true), hides the state dot/text outright (the orb's
+     * color already conveys listening/speaking), and fades the background to transparent so the page
+     * underneath reads through. */
     fun setDocked(docked: Boolean) {
         if (this.docked == docked) return
         this.docked = docked
         onDockedChanged?.invoke(docked)
         applyDockedGeometry(animated = true)
+        stateRow.visibility = if (docked) INVISIBLE else VISIBLE
         captionFull.animate().alpha(if (docked) 0f else 1f).setDuration(300)
             .withEndAction { captionFull.visibility = if (docked) INVISIBLE else VISIBLE }.start()
         if (!docked) captionFull.visibility = VISIBLE
@@ -201,16 +223,18 @@ class ConversationView(context: Context) : FrameLayout(context) {
     }
 
     /** Recomputes the orb's docked-mode scale/translation from the view's current size (§8: shrinks
-     * to 56dp, moves to bottom-left 34dp/22dp). The orb's natural (non-docked) layout position is
-     * screen center offset up by 80dp (its own bottomMargin above); both corners are recomputed here
-     * rather than hard-coded so a size change (e.g. rotation) keeps the docked target correct. */
+     * to 48dp, moves to the top-left — centered in the docked bar, which spans y=10dp to y≈66dp, so
+     * its own center sits at y=38dp; x is 34dp + half the 48dp orb). The orb's natural (non-docked)
+     * layout position is screen center offset up by 80dp (its own bottomMargin above); the natural
+     * corner is recomputed from the view's current size (so a size change, e.g. rotation, keeps the
+     * docked target correct), while the docked corner is the fixed top-bar position above. */
     private fun applyDockedGeometry(animated: Boolean) {
         if (width == 0 || height == 0) return
         val naturalCx = width / 2f
         val naturalCy = height / 2f - dp(80)
-        val dockedCx = dp(34) + dp(28)
-        val dockedCy = height - dp(22) - dp(28)
-        val scale = if (docked) 56f / 150f else 1f
+        val dockedCx = dp(34) + dp(24)
+        val dockedCy = dp(38)
+        val scale = if (docked) 48f / 150f else 1f
         val tx = if (docked) dockedCx - naturalCx else 0f
         val ty = if (docked) dockedCy - naturalCy else 0f
         if (animated) {
