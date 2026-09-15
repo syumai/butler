@@ -27,9 +27,13 @@ At runtime, `VoskWakeDecoder` (`LocalWakeWordEngine.kt`) copies the asset tree o
 
 `VoskWakeDecoder` restricts the recognizer to a runtime grammar of exactly two entries — `["ハロー バトラー", "[unk]"]` — via `Recognizer(model, 16000f, grammarJson)`, rather than running free-vocabulary recognition (see "Evaluation" below for why). A result is only treated as a wake-word hit when the recognized text contains the phrase's words as an **adjacent** run — `VoskWake.hit` (pure Kotlin, unit-tested in `VoskWakeTest.kt`) splits the result text on whitespace and checks the phrase's word list appears contiguously in the token list. This matters because Vosk's partial results transiently surface a bare `ハロー` or a bare `バトラー` on unrelated speech even in grammar mode (confirmed against a real negative recording), so requiring only "both words present somewhere" would false-wake; requiring adjacency does not.
 
+As of 2026-09-15, `VoskWakeDecoder.accept` only checks `VoskWake.hit` against **final** results — partial results are no longer checked at all, adjacency rule or not (see "Evaluation" below for why).
+
 ## Evaluation
 
 `scripts/vosk-eval.py` (run with `.tools/vosk-python/bin/python`, a venv with `pip install vosk`) replicates this decode+hit-check offline against arbitrary `.pcm` recordings, for tuning without a device. Against the user's own 60s recordings, the grammar `["ハロー バトラー", "[unk]"]` detected all 11 spoken utterances (each already at the partial-result stage) with zero false adjacent-pair hits in 60s of unrelated negative speech, at 0.4s decode time per 60s of audio; free-vocabulary decoding (no grammar) only caught 9/11 (misses heard as "ハロー から", "部屋 を バトラー") at 3.8s per 60s — both slower and less accurate, hence the grammar-restricted approach.
+
+**Final-result-only decision (2026-09-15).** A larger offline eval against ~92 minutes of unrelated real Japanese speech — the user's own 60s negative recording plus 90 minutes of public-domain LibriVox Japanese audiobooks (converted to 16kHz mono s16le PCM with ffmpeg) — found 25 false wakes, every one of them a partial-result hit (e.g. the partial `[unk] ハロー バトラー` triggered by the spoken words 「はりきりという網をゆすぶって」); final results produced 0 false wakes across the same audio. The user's positive recording still hit 11/11 at the final-result stage, about 1.2s later on average than the corresponding partial-result hit. Given that trade-off, `VoskWakeDecoder.accept` now fires only on final results (`recognizer.acceptWaveForm(...)` returning `true`); partial results are still printed by `scripts/vosk-eval.py` as a diagnostic, but no longer wake the app.
 
 ## Limitation: Japanese pronunciation only
 

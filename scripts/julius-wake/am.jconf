@@ -1,0 +1,19 @@
+##
+## Acoustic model configuration for the offline Julius wake-word PoC.
+##
+## Run julius with -C pointing at this file plus -gram pointing at ./wake
+## (the grammar prefix in this same directory), e.g. from the repo root:
+##   julius -C scripts/julius-wake/am.jconf -gram scripts/julius-wake/wake \
+##          -input rawfile -filelist <list-of-wav-paths>
+##
+## NOTE: Julius resolves relative paths written *inside* a -C config file
+## relative to the directory containing that config file, not relative to
+## the process's current working directory. So the -h/-hlist paths below
+## are written relative to this file's own directory (scripts/julius-wake/),
+## not relative to the repo root, even though the invocation above is run
+## from the repo root.
+
+-h ../../.tools/julius/dictation-kit/model/phone_m/jnas-tri-3k16-gid.binhmm
+-hlist ../../.tools/julius/dictation-kit/model/phone_m/logicalTri-3k16-gid.bin
+
+## EOF
