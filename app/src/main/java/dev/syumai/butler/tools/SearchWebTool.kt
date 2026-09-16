@@ -85,7 +85,10 @@ class SearchWebTool(private val context: Context, private val settings: Settings
 
     private companion object {
         const val IMAGE_BUDGET_MS = 5_000L
-        const val CARD_IMAGE_MAX_PX = 640
+        // The device display is 960px wide; a full-screen card picture (SearchCardsView) at ≤640px
+        // was visibly soft on it, so this matches the display's own width instead. Memory: at most
+        // SearchCards.MAX_ITEMS (5) bitmaps held at once.
+        const val CARD_IMAGE_MAX_PX = 960
     }
 }
 
