@@ -96,6 +96,7 @@ class SegmentResult:
     sentence: str = ""
     wake_cm: float | None = None  # max cmscore over WAKE occurrences, if any
     wake_word: str | None = None  # which WAKE_WORDS member wake_cm came from
+    filler_count: int = 0  # total <garbage> tokens in the 1-best sentence
     ok: bool = True  # False if Julius produced no result for this segment
 
 
@@ -324,6 +325,7 @@ def parse_julius_output(stdout: str, segments: list[Segment]) -> list[SegmentRes
         if line.startswith("sentence1:"):
             sentence = line[len("sentence1:"):].strip()
             results[idx].sentence = sentence
+            results[idx].filler_count = sentence.split().count("<garbage>")
             results[idx].ok = True
         elif line.startswith("cmscore1:"):
             cm_values = [float(x) for x in line[len("cmscore1:"):].split()]
@@ -336,8 +338,28 @@ def parse_julius_output(stdout: str, segments: list[Segment]) -> list[SegmentRes
     return results
 
 
-def is_hit(result: SegmentResult, threshold: float) -> bool:
-    return result.wake_cm is not None and result.wake_cm >= threshold
+def is_hit(
+    result: SegmentResult,
+    threshold: float,
+    max_fillers: int | None = None,
+    max_segment_s: float | None = None,
+) -> bool:
+    """A hit needs a confident WAKE candidate (cmscore >= threshold) AND, if the corresponding gate is
+    given, a 1-best sentence with at most `max_fillers` total `<garbage>` tokens and/or a VAD segment
+    duration of at most `max_segment_s` seconds. These two optional structural gates exist because
+    cmscore alone doesn't separate genuine wake utterances (short, standalone) from false wakes buried
+    in running speech (long segments, many surrounding filler words) -- see
+    scripts/julius-wake/README.md's "2026-09-17: Hey Butler" section.
+    """
+    if result.wake_cm is None or result.wake_cm < threshold:
+        return False
+    if max_fillers is not None and result.filler_count > max_fillers:
+        return False
+    if max_segment_s is not None:
+        duration = result.segment.end_s - result.segment.start_s
+        if duration > max_segment_s:
+            return False
+    return True
 
 
 def evaluate_file(
@@ -348,6 +370,8 @@ def evaluate_file(
     extra_args: list[str],
     threshold: float,
     work_dir: Path,
+    max_fillers: int | None = None,
+    max_segment_s: float | None = None,
 ) -> FileReport:
     segments, audio_seconds = build_segments(pcm_path, vad_threshold, work_dir)
     report = FileReport(path=pcm_path, audio_seconds=audio_seconds)
@@ -365,34 +389,37 @@ def evaluate_file(
     for r in report.results:
         s = r.segment
         cm_str = f"{r.wake_cm:.3f}" if r.wake_cm is not None else "-"
-        hit_str = f"  <== HIT ({r.wake_word})" if is_hit(r, threshold) else ""
+        hit_str = f"  <== HIT ({r.wake_word})" if is_hit(r, threshold, max_fillers, max_segment_s) else ""
         sentence = r.sentence if r.ok else "(no result)"
-        print(f"  {s.start_s:6.2f}-{s.end_s:6.2f}  {sentence}  wakeCm={cm_str}{hit_str}")
+        dur = s.end_s - s.start_s
+        print(f"  {s.start_s:6.2f}-{s.end_s:6.2f} ({dur:4.2f}s)  {sentence}  wakeCm={cm_str} "
+              f"fillers={r.filler_count}{hit_str}")
 
-    hits = sum(1 for r in report.results if is_hit(r, threshold))
+    hits = sum(1 for r in report.results if is_hit(r, threshold, max_fillers, max_segment_s))
     wake_cms = [r.wake_cm for r in report.results if r.wake_cm is not None]
     hours = audio_seconds / 3600.0
     hits_per_hour = hits / hours if hours > 0 else 0.0
     hits_by_word: dict[str, int] = {}
     for r in report.results:
-        if is_hit(r, threshold) and r.wake_word is not None:
+        if is_hit(r, threshold, max_fillers, max_segment_s) and r.wake_word is not None:
             hits_by_word[r.wake_word] = hits_by_word.get(r.wake_word, 0) + 1
 
     print(f"  summary: {len(report.results)} segment(s), {hits} hit(s) @ threshold={threshold} "
-          f"({hits_by_word}), {hits_per_hour:.1f} hits/hour, decode {decode_seconds:.2f}s")
+          f"max_fillers={max_fillers} max_segment_s={max_segment_s} ({hits_by_word}), "
+          f"{hits_per_hour:.1f} hits/hour, decode {decode_seconds:.2f}s")
     print(f"  WAKE candidate cmscores: {[f'{c:.3f}' for c in wake_cms]}")
     print()
     return report
 
 
-def print_threshold_table(reports: list[FileReport]) -> None:
+def print_threshold_table(reports: list[FileReport], max_fillers: int | None = None, max_segment_s: float | None = None) -> None:
     print("=== hit counts per file at various thresholds ===")
     header = "file".ljust(40) + "".join(f"t={t:<7}" for t in THRESHOLD_TABLE)
     print(header)
     for report in reports:
         row = str(report.path).ljust(40)
         for t in THRESHOLD_TABLE:
-            hits = sum(1 for r in report.results if is_hit(r, t))
+            hits = sum(1 for r in report.results if is_hit(r, t, max_fillers, max_segment_s))
             row += f"{hits:<9}"
         print(row)
 
@@ -409,6 +436,12 @@ def main() -> None:
     parser.add_argument("--penalty2", type=float, default=DEFAULT_PENALTY2,
                          help=f"Julius -penalty2 (2nd pass word insertion penalty, default: {DEFAULT_PENALTY2})")
     parser.add_argument("--julius-args", default="", help="extra raw arguments appended to the julius command line")
+    parser.add_argument("--max-fillers", type=int, default=None,
+                         help="structural gate: reject a hit whose 1-best sentence has more than this "
+                              "many total <garbage> tokens (default: no gate)")
+    parser.add_argument("--max-segment-s", type=float, default=None,
+                         help="structural gate: reject a hit whose (padded) VAD segment duration exceeds "
+                              "this many seconds (default: no gate)")
     args = parser.parse_args()
 
     check_prereqs()
@@ -431,10 +464,12 @@ def main() -> None:
                 extra_args,
                 args.threshold,
                 work_dir,
+                args.max_fillers,
+                args.max_segment_s,
             )
             reports.append(report)
 
-    print_threshold_table(reports)
+    print_threshold_table(reports, args.max_fillers, args.max_segment_s)
 
 
 if __name__ == "__main__":

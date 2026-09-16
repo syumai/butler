@@ -27,17 +27,20 @@ import java.nio.ByteOrder
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.concurrent.thread
 
-// Vosk detects both phrases; Julius detects only ハローバトラー. Adding ヘイバトラー to Julius's
-// phone-loop grammar (scripts/julius-wake/wake.voca/wake.dict) was tried and evaluated offline
-// (scripts/julius-eval.py) on 2026-09-17, but it produced false wakes on real unrelated Japanese
-// speech (LibriVox) even after dropping its most confusable pronunciation variants, so it was not
-// shipped for Julius — see scripts/julius-wake/README.md's "2026-09-17: Hey Butler" section and
-// third_party/julius/README.md for the numbers. juliusWords intentionally has one entry, matching
-// what the shipped Julius grammar actually recognizes; JuliusWake.hit still takes a Collection so a
-// future grammar change (a different acoustic approach, or a longer/less confusable phrase) can add
-// to it without another signature change.
+// Vosk and Julius both detect ハローバトラー and ヘイバトラー. ヘイバトラー was added to Julius's
+// phone-loop grammar (scripts/julius-wake/wake.voca/wake.dict) on 2026-09-17 after a first attempt
+// (same day) found its per-word confidence score (CM) alone couldn't separate genuine wake utterances
+// from false wakes on real unrelated Japanese speech (LibriVox): both ranges overlapped. A second
+// offline sweep (scripts/julius-eval.py, see scripts/julius-wake/README.md's "2026-09-17: Hey Butler"
+// section and third_party/julius/README.md) found a *structural* gate does separate them cleanly --
+// every false wake sat inside running speech with many surrounding `<garbage>` filler words, while
+// genuine wake utterances are short, standalone segments with few fillers -- so JuliusWakeDecoder now
+// judges a whole <RECOGOUT> block (JuliusWake.BlockParser) rather than a single <WHYPO> line, gating
+// on both CM and total filler count. Recall for a real speaker saying "Hey Butler" specifically is
+// unverified: no real-voice recording of "Hey Butler" exists, only rec1's single ヘイバトラー hit,
+// which is actually a misrecognized "Hello Butler" utterance -- check on-device before relying on it.
 enum class WakePhrase(val label: String, val voskPhrases: List<String>, val juliusWords: List<String>) {
-    HELLO_BUTLER("Hello Butler / Hey Butler", listOf("ハロー バトラー", "ヘイ バトラー"), listOf("ハローバトラー")),
+    HELLO_BUTLER("Hello Butler / Hey Butler", listOf("ハロー バトラー", "ヘイ バトラー"), listOf("ハローバトラー", "ヘイバトラー")),
 }
 
 /** The on-device decoder that watches the standby microphone stream. Samples are raw 16-bit PCM
@@ -139,9 +142,11 @@ class VoskWakeDecoder(context: Context, phrase: WakePhrase) : WakeDecoder {
  * streamed to Julius as adinnet packets (4-byte little-endian byte count, then that many bytes of s16le
  * PCM, chunked to <=1600 samples per packet), terminated by a 0-count packet. Julius may write single
  * command bytes back on that same socket (`'0'` pause / `'1'` resume); a background thread reads and
- * discards them. Results are read line-by-line from the module socket by another background thread;
- * each line is checked with [JuliusWake.hit] against [WakePhrase.juliusWords] and [WAKE_THRESHOLD],
- * and a hit sets [wakeFlag], which [accept] polls and clears.
+ * discards them. Results are read line-by-line from the module socket by another background thread and
+ * fed to a [JuliusWake.BlockParser] (against [WakePhrase.juliusWords], [WAKE_THRESHOLD] and
+ * [MAX_FILLERS]), which judges a whole `<RECOGOUT>` block at once rather than any single `<WHYPO>` line
+ * in isolation — see that class's doc comment for why. A hitting block sets [wakeFlag], which [accept]
+ * polls and clears.
  *
  * The asset-unpack marker ([AssetUnpacker.unpack]'s `marker` argument) is not just
  * `"julius:${BuildConfig.VERSION_CODE}"`: it also folds in a CRC32 of the `julius/grammar/wake.dict`
@@ -162,6 +167,13 @@ class JuliusWakeDecoder(context: Context, phrase: WakePhrase) : WakeDecoder {
         // -cmalpha default) cleanly separated true positives from the (presence-gated, penalty-tuned)
         // negatives in that offline sweep, so it's used unchanged as the live confidence threshold.
         const val WAKE_THRESHOLD = 0.05
+        // See scripts/julius-wake/README.md "2026-09-17: Hey Butler": CM alone doesn't separate
+        // ヘイバトラー's genuine hits from its false wakes (their ranges overlap), but the total
+        // <garbage> filler-word count in the same <RECOGOUT> block does -- every observed false wake
+        // had 11+ fillers, every genuine rec1 hit had <=6. 10 was the loosest (most permissive) value
+        // swept that still produced zero false wakes across the full negative set (japanese-speech-neg1,
+        // ~92 minutes of LibriVox, and the macOS `say` confusable set).
+        const val MAX_FILLERS = 10
         // Explicit IPv4 loopback, not InetAddress.getLoopbackAddress(): on this device that resolves
         // to the IPv6 loopback (::1), which nothing is listening on -- Julius's adin_tcpip_standby()
         // binds INADDR_ANY (IPv4 only, confirmed via /proc/net/tcp showing "00000000:<port>" entries,
@@ -184,7 +196,7 @@ class JuliusWakeDecoder(context: Context, phrase: WakePhrase) : WakeDecoder {
         }
     }
 
-    private val juliusWords = phrase.juliusWords
+    private val blockParser = JuliusWake.BlockParser(phrase.juliusWords, WAKE_THRESHOLD, MAX_FILLERS)
     private val wakeFlag = AtomicBoolean(false)
     @Volatile private var closed = false
     @Volatile private var streamFailed = false
@@ -335,7 +347,7 @@ class JuliusWakeDecoder(context: Context, phrase: WakePhrase) : WakeDecoder {
             val reader = BufferedReader(InputStreamReader(moduleSocket.getInputStream()))
             while (true) {
                 val line = reader.readLine() ?: break
-                if (JuliusWake.hit(line, juliusWords, WAKE_THRESHOLD)) wakeFlag.set(true)
+                if (blockParser.feed(line)) wakeFlag.set(true)
             }
             if (!closed) streamFailed = true
         } catch (_: IOException) { if (!closed) streamFailed = true }

@@ -105,16 +105,21 @@ Four categories:
 
 - `NS_B` / `NS_E`: forced sentence boundary silence (`silB`/`silE`), as
   required by Julius grammar mode.
-- `WAKE`: the wake phrase「ハローバトラー」, with four pronunciation
-  variants covering the vowel-length/consonant ambiguity in how the phrase
-  tends to get pronounced (`h a r o: b a t o r a:`, `h a r o b a t o r a:`,
-  `h a r o: b a t o r a`, `h e r o: b a t o r a:`). All four map to the same
-  word string, so any of them recognizing counts as the WAKE word appearing
-  in `wseq1`/`sentence1`. A second phrase,「ヘイバトラー」("Hey Butler"),
-  was tried in this same category on 2026-09-17 (adding a word to an
-  existing category is a `wake.voca`/`wake.dict`-only change — the DFA,
-  which only distinguishes categories, doesn't need to be regenerated) but
-  was not kept; see "2026-09-17: Hey Butler" below for why.
+- `WAKE`: two phrases, both mapped through the same category (adding a word
+  to an existing category is a `wake.voca`/`wake.dict`-only change — the
+  DFA, which only distinguishes categories, doesn't need to be
+  regenerated):
+  - 「ハローバトラー」("Hello Butler"), with four pronunciation variants
+    covering the vowel-length/consonant ambiguity in how the phrase tends
+    to get pronounced (`h a r o: b a t o r a:`, `h a r o b a t o r a:`,
+    `h a r o: b a t o r a`, `h e r o: b a t o r a:`).
+  - 「ヘイバトラー」("Hey Butler"), added 2026-09-17, with two
+    pronunciation variants (`h e i b a t o r a:`, `h e i b a t o r a`) —
+    see "2026-09-17: Hey Butler" below for why only two, not the same four-
+    variant pattern as「ハローバトラー」.
+
+  All variants of a phrase map to the same word string, so any of them
+  recognizing counts as that WAKE word appearing in `wseq1`/`sentence1`.
 - `FILLER`: one entry per monophone in the acoustic model, each written as
   `<garbage> <phone>` — the word string is the same for every phone (only
   the pronunciation differs), so `FILLER` acts as a "match any single
@@ -362,18 +367,113 @@ speech (LibriVox), not the synthetic `say` sets; the `say` confusable set's
 false-wake count is unaffected because it was already being explained as
 `ハローバトラー`, not `ヘイバトラー`, in every case.
 
-**Conclusion: "Hey Butler" was not added to the shipped Julius grammar.**
-`wake.voca`/`wake.dict` were reverted to their pre-2026-09-17 state
-(`ハローバトラー` only, four variants), matching the "stop and report
-instead of shipping a regression" bar this evaluation was run against.
-`WakePhrase.juliusWords` (`LocalWakeWordEngine.kt`) has one entry,
-`"ハローバトラー"`; `JuliusWake.hit` still takes a `Collection<String>` so
-a future attempt — a different acoustic model, a grammar redesign that
-isolates `ヘイ` from the filler-phone loop instead of racing it, or more
-negative real-speech data to tune against — can add to it without another
-signature change. Vosk's addition was not affected by this finding: its
-grammar-restricted ASR plus the `VoskWake.hit` word-adjacency rule is a
-different detection mechanism (an exact two-word match in a final ASR
-result, not a phone-loop confidence race), so "Hey Butler" ships there.
-Since Julius is the default engine, this means "Hey Butler" is currently
-detected only when Vosk is selected in Settings → Wake.
+**First-attempt conclusion: "Hey Butler" was not added to the shipped
+Julius grammar on this pass**, matching the "stop and report instead of
+shipping a regression" bar this evaluation was run against — `cmscore1`
+alone (this grammar's only per-word confidence signal) could not separate
+ヘイバトラー's genuine hits from its false wakes: both ranges overlap (see
+the introduction below). `wake.voca`/`wake.dict` were reverted to their
+pre-2026-09-17 state at this point in the investigation.
+
+## 2026-09-17: Hey Butler, take two — a structural gate
+
+The false wakes above all had one thing in common that the genuine hits
+didn't: looking at the actual `sentence1` text (not just `cmscore1`), every
+false ヘイバトラー wake sat inside a long run of surrounding `<garbage>`
+filler words, decoded from several seconds of continuous unrelated speech
+(e.g. `<s> <garbage>×7 ヘイバトラー <garbage>×6 </s>`, 1.5–2.3s VAD
+segments), while every genuine wake utterance in `hello-butler-ja-rec1.pcm`
+is a short, standalone segment (1.1–1.5s) with at most 6 fillers total (10
+of the 11 have ≤2). `cmscore1` doesn't capture this because it only scores
+one word in isolation; the *count* of `<garbage>` `<WHYPO>` words in the
+same recognized sentence does.
+
+`scripts/julius-eval.py` gained two optional structural gates on top of the
+existing `--threshold`, applied only when passed: `--max-fillers N`
+(reject a hit whose 1-best sentence has more than `N` total `<garbage>`
+tokens) and `--max-segment-s S` (reject a hit whose VAD segment duration
+exceeds `S` seconds). ヘイバトラー was re-added to `wake.voca`/`wake.dict`
+(the two `h e i` variants first, matching the take-one mitigation), and the
+full set was swept with the shipped defaults (`--threshold 0.05 --penalty1
+-0.8 --penalty2 -0.8`) against `hello-butler-ja-rec1.pcm`,
+`japanese-speech-neg1.pcm`, all 14 `neg-librivox/*.pcm` files (~92 min),
+and all 18 `neg-say/*.pcm` files (9 `chat_*`, 9 `confusable_*` — acoustically
+identical across voices, see `.tools/eval-sets.md`, so the 9 `confusable_*`
+files are 9 copies of the same 7-false-wake result, not independent
+evidence):
+
+| max_fillers | max_segment_s | rec1 hits (/11) | neg1 false wakes | LibriVox false wakes | `say` confusable false wakes | `say` chat false wakes |
+|---:|---:|---:|---:|---:|---:|---:|
+| (none) | (none) | 11 | 0 | 5 | 63 (7×9 identical) | 0 |
+| (none) | 2.0 | 11 | 0 | 3 | 0 | 0 |
+| (none) | 2.5 | 11 | 0 | 5 | 9 | 0 |
+| 4 | any | 10 | 0 | 0 | 0 | 0 |
+| 6 | any | 11 | 0 | 0 | 0 | 0 |
+| 8 | any | 11 | 0 | 0 | 0 | 0 |
+| 10 | any | 11 | 0 | 0 | 0 | 0 |
+
+(`max_segment_s` values 2.0/2.5 combined with a `max_fillers` value change
+nothing beyond what `max_fillers` alone already achieves at that row, so
+they aren't broken out as separate columns above — see the raw sweep for
+the full 4×3 grid.) `--max-fillers` alone, with no duration gate, already
+meets the goal (0 false wakes on neg1 + LibriVox + the `say` confusable
+set) starting at 6: rec1's one ヘイバトラー hit has exactly 6 fillers (the
+54.43–55.84s segment — see below), and every false wake in the swept
+negative data has at least 11. At `max_fillers=4` the goal is still met but
+that one ヘイバトラー hit is excluded (10/11 total, still clearing the
+">=10/11" bar but with no margin left for that word specifically). Since a
+fillers-only rule already suffices, `--max-segment-s` (which would need
+`WakeVad` to plumb segment duration through to the decoder) was not
+pursued further.
+
+**The `say` confusable set is also fixed by this rule**, not just
+ヘイバトラー's own false wakes: its 7 `ハローバトラー` false wakes per
+voice (baseline, no gate) all sit in segments the `say` synthesizer never
+cleanly pauses on (6–10s+ single-utterance recordings, 22–131 fillers each
+— see the raw log), so `max_fillers>=6` clears them along with the
+LibriVox ones, even though `ハローバトラー`'s own grammar entries were
+never touched.
+
+**Four-variant grammar, for comparison:** re-adding the two `h e:`
+(long-vowel) variants dropped in take one (`h e: b a t o r a:`, `h e: b a
+t o r a`, alongside the `h e i` pair) was swept the same way under
+`--max-fillers 10`. Baseline (no gate) false wakes are higher than the
+2-variant grammar (LibriVox: 8 vs 5 — botchan_01: 2, botchan_02: 2,
+caucasus_01: 1, caucasus_02: 1, caucasus_05: 1, gongitsune_01: 1), but
+`max_fillers>=6` clears all of them too, with the same 11/11 rec1 result
+(the extra variants recognize the same rec1 segment, not an additional
+one). Since the 4-variant grammar recovers no additional true positives
+over the 2-variant one, only more baseline false-wake mass for the filler
+gate to suppress, **the 2-variant grammar (`h e i` only) was kept** —
+loosest grammar that already meets the goal, maximizing the safety margin
+between it and the filler gate rather than relying on the gate to paper
+over a noisier grammar.
+
+**Chosen rule: `--max-fillers 10`, no duration gate.** `max_fillers=6`
+would already suffice for 0 false wakes with more margin from the genuine
+side (rec1's max is 6), but 10 was chosen instead per "pick the loosest
+rule that meets the goal": no false wake in any swept set fell below 11
+fillers, so nothing between 6 and 10 changes the result on data seen so
+far, and the looser (higher) value leaves more room for a genuine future
+wake utterance with more surrounding filler speech than anything in
+`hello-butler-ja-rec1.pcm` happened to produce, at the cost of a smaller
+margin (1 filler) from the nearest false wake seen so far. No duration gate
+is used since the fillers-only rule already meets the goal on its own, and
+`--max-segment-s` would need `WakeVad` to plumb segment duration through to
+the decoder (it currently doesn't track or expose it) for no proven benefit
+over `--max-fillers` alone.
+
+**Conclusion: "Hey Butler" (`ヘイバトラー`, two `h e i` pronunciation
+variants) is shipped in the Julius grammar**, gated by both `cmscore1 >=
+0.05` and total `<garbage>` count `<= 10` in the same recognized sentence.
+`WakePhrase.juliusWords` (`LocalWakeWordEngine.kt`) now has two entries,
+`"ハローバトラー"` and `"ヘイバトラー"`; `JuliusWake` gained a
+`BlockParser` that accumulates a whole `<RECOGOUT>` block (not a single
+`<WHYPO>` line) and applies both gates together — see its doc comment and
+`JuliusWakeTest`. **Recall for a real speaker actually saying "Hey Butler"
+is unverified**: no real-voice recording of "Hey Butler" exists in this
+evaluation; the sole ヘイバトラー hit in `hello-butler-ja-rec1.pcm` is a
+misrecognition of a spoken "Hello Butler" utterance, not a genuine "Hey
+Butler" utterance, so this must be checked on-device (see
+`.claude/skills/wake-tuning/SKILL.md` for how to collect a real recording)
+before relying on it in practice.
