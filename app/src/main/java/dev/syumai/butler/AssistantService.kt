@@ -356,6 +356,9 @@ class AssistantService : Service() {
             if (!type.endsWith(".delta")) android.util.Log.d("Butler", "rt " + when (type) {
                 "error" -> "$type ${e.optJSONObject("error")?.toString()?.take(300)}"
                 "response.done" -> "$type ${e.optJSONObject("response")?.optString("status")}"
+                // Lets an adb-driven check see what the model actually said (e.g. whether a card
+                // read-aloud came out verbatim) without a person listening at the speaker.
+                "response.output_audio_transcript.done" -> "$type ${e.optString("transcript").take(200)}"
                 else -> type
             })
         }
