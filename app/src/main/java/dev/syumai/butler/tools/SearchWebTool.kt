@@ -36,7 +36,9 @@ class SearchWebTool(private val context: Context, private val settings: Settings
         val raw = client.searchCards(settings, input)
         val parsed = runCatching { SearchCards.parse(raw) }.getOrNull() ?: return client.search(settings, input)
         val cards = resolveCardImages(parsed.items)
-        SearchCards.publish(query, cards)
+        // A search that found nothing worth showing (plain facts, numbers) leaves the previous cards on
+        // the standby viewer rather than blanking it: the user may still be looking at them.
+        if (cards.isNotEmpty()) SearchCards.publish(query, cards)
         val cardsJson = JSONArray()
         cards.forEach { card ->
             cardsJson.put(JSONObject().put("number", card.id).put("title", card.title)
