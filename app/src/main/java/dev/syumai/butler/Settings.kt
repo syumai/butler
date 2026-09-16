@@ -11,16 +11,17 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
-/** The on-device wake-word engine. Vosk (default) is a continuous small-vocabulary ASR restricted to a
- * runtime grammar; Julius (experimental, off by default) is a phone-loop grammar decoder run as a child
- * process. See `LocalWakeWordEngine.kt`'s `VoskWakeDecoder`/`JuliusWakeDecoder` and
- * `third_party/julius/README.md` for the 2026-09-15 offline comparison that keeps Julius experimental. */
+/** The on-device wake-word engine. Julius (default since 2026-09-16) is a phone-loop grammar decoder run
+ * as a child process; on-device verification that day judged it good enough to become the default. Vosk
+ * is a continuous small-vocabulary ASR restricted to a runtime grammar, and remains selectable as the
+ * alternative. See `LocalWakeWordEngine.kt`'s `VoskWakeDecoder`/`JuliusWakeDecoder` and
+ * `third_party/julius/README.md` for the 2026-09-15 offline comparison between the two engines. */
 enum class WakeEngine(val id: String, val labelRes: Int) {
     VOSK("vosk", R.string.wake_engine_vosk),
     JULIUS("julius", R.string.wake_engine_julius);
 
     companion object {
-        val DEFAULT = VOSK
+        val DEFAULT = JULIUS
         fun fromId(id: String?): WakeEngine {
             val normalized = id?.trim()?.lowercase()
             if (normalized.isNullOrBlank()) return DEFAULT
@@ -56,8 +57,8 @@ class Settings(context: Context) {
     // tried first but caused too many false wakes, so the longer Hello Butler phrase was adopted.
     // Vosk's Japanese model detects the Japanese pronunciation ("ハロー、バトラー") only.
     val wakePhrase get() = WakePhrase.HELLO_BUTLER
-    // Default is Vosk; Julius stays selectable in Settings -> Wake as an experimental alternative (see
-    // WakeEngine's doc comment for why it isn't the default).
+    // Default is Julius, since 2026-09-16, after on-device verification; Vosk stays selectable in
+    // Settings -> Wake as the alternative (see WakeEngine's doc comment).
     var wakeEngine: WakeEngine
         get() = WakeEngine.fromId(get("wakeEngine"))
         set(value) = set("wakeEngine", value.id)

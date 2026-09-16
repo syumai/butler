@@ -126,7 +126,7 @@
     <string name="settings_row_wake_phrase">Wake phrase</string>
     <string name="settings_row_wake_engine">Wake engine</string>
     <string name="wake_engine_vosk">Vosk</string>
-    <string name="wake_engine_julius">Julius (experimental)</string>
+    <string name="wake_engine_julius">Julius</string>
 
     <string name="settings_row_location_name">Region name</string>
     <string name="settings_row_latitude">Latitude</string>

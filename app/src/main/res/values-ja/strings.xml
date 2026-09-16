@@ -126,7 +126,7 @@
     <string name="settings_row_wake_phrase">呼びかけの言葉</string>
     <string name="settings_row_wake_engine">検知エンジン</string>
     <string name="wake_engine_vosk">Vosk</string>
-    <string name="wake_engine_julius">Julius（実験的）</string>
+    <string name="wake_engine_julius">Julius</string>
 
     <string name="settings_row_location_name">地域名</string>
     <string name="settings_row_latitude">緯度</string>

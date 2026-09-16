@@ -1,4 +1,4 @@
-# Bundled Julius wake-word inference (experimental)
+# Bundled Julius wake-word inference (default wake engine)
 
 - Engine: **Julius 4.6**, BSD-3-Clause (see `LICENSE`, the upstream `julius-src/LICENSE` file), built
   from the pinned source commit as a standalone executable, `libjulius-bin.so`, cross-compiled for
@@ -62,7 +62,7 @@ with status lines. `JuliusWake.kt` parses `<WHYPO WORD="..." CM="...".../>` line
 Julius blocks at startup waiting for a module client to connect before it opens its adinnet server, so
 `JuliusWakeDecoder` connects the module socket first, then adinnet, each retried for up to 15s.
 
-## 2026-09-15 offline comparison (why Julius ships experimental, off by default)
+## 2026-09-15 offline comparison, and why Julius became the default
 
 Evaluated with `scripts/julius-eval.py` against the same recordings used to tune the shipped Vosk
 grammar (see `third_party/vosk/README.md`'s "Evaluation" section): the user's own 60s positive recording
@@ -94,10 +94,15 @@ through and their hit count is reported, not asserted (see its source comment). 
 not contrary to, the finding above: this build's JNAS model reliably avoids false wakes on unrelated
 speech (synthetic or real) but has only been confirmed to detect the wake phrase from real human speech.
 
-Hence Julius ships as a selectable, clearly-labeled "experimental" engine in Settings -> Wake, with Vosk
-remaining the default. See `scripts/julius-wake/README.md`'s "Tuning results" for the full penalty/threshold sweep
-this table's numbers come from, and `.claude/skills/wake-tuning/SKILL.md` for how to collect more
-real-speaker recordings and re-evaluate either engine.
+Based on this offline comparison alone, 10/11 true positives from a single speaker wasn't enough
+evidence to make Julius the default, so it initially shipped as a selectable, clearly-labeled
+"experimental" engine in Settings -> Wake, with Vosk remaining the default. On-device use on
+2026-09-16 then confirmed the wake phrase was reliably detected in practice, and with 0 false wakes
+already demonstrated offline, this was judged good enough: Julius became the default engine in
+Settings -> Wake, with Vosk remaining selectable as the alternative. See
+`scripts/julius-wake/README.md`'s "Tuning results" for the full penalty/threshold sweep this table's
+numbers come from, and `.claude/skills/wake-tuning/SKILL.md` for how to collect more real-speaker
+recordings and re-evaluate either engine.
 
 ## License files
 
