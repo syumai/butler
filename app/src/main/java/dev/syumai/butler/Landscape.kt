@@ -19,9 +19,10 @@ import kotlin.math.sin
 import kotlin.random.Random
 
 // Shared by RAIN and THUNDER: dx/dy ratio for both a streak's own tilt and its fall direction, so the line
-// always points the way it is moving (a slight, consistent lean off vertical, not the ~30-degree slant a
-// mismatched tilt/drift produced before).
-private const val RAIN_SLANT = -0.12f
+// always points the way it is moving. Currently 0 so streaks fall straight down with no drift; this ratio
+// is the single knob to reintroduce a lean (a nonzero value keeps the streak's tilt and its horizontal
+// drift in sync, avoiding the mismatched-tilt/drift ~30-degree slant a naive change once produced).
+private const val RAIN_SLANT = 0f
 
 /** Original code-drawn sky background; users can replace it with a local photograph, or with a weather-linked
  *  animated scene. Animation runs only while the view is attached, its window is visible, and the current
