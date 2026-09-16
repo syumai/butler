@@ -27,6 +27,10 @@ private class CaptionScrollView(context: Context, private val maxHeightPx: Int) 
 
     init {
         isVerticalScrollBarEnabled = false
+        // The cap is a whole number of lines but the auto-scroll lands wherever the newest text ends,
+        // so the line at the top edge is usually clipped mid-glyph; fade it out instead of cutting it.
+        isVerticalFadingEdgeEnabled = true
+        setFadingEdgeLength(context.dp(24))
         setOnTouchListener { _, event ->
             if (event.action == MotionEvent.ACTION_DOWN || event.action == MotionEvent.ACTION_MOVE) {
                 lastUserTouchAt = SystemClock.elapsedRealtime()
