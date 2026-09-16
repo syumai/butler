@@ -32,6 +32,8 @@ class AssistantService : Service() {
          * below — MainActivity's tick uses a change here to refresh SmartHomePage/MusicPage (§9). */
         var homeStateSerial = 0; private set
         const val START = "start"; const val TALK = "talk"; const val END = "end"; const val STOP = "stop"
+        /** Injects `EXTRA_TEXT` as a user turn via [say] — sent by SearchCardsView's "read aloud" button. */
+        const val SAY = "say"; const val EXTRA_TEXT = "text"
         const val VIEW_WEATHER = 1
         /** After a device operation completes, how long to wait for the user to say anything else before
          * ending the conversation on its own (short-circuiting the normal, longer silence timeout). */
@@ -98,6 +100,11 @@ class AssistantService : Service() {
     /** Debug-only (see docs/architecture.md): the last non-blank `debug.butler.say` value already
      * injected as a user turn, so the ticker only acts on it once. Reset in [begin]. */
     private var lastDebugSay = ""
+    /** Text queued by [say] waiting for a conversation to become ready (either one already
+     * connecting, or one [say] itself just started) — consumed and cleared once `session.updated`
+     * reports the session ready. Cleared on [finish]/[onDestroy] so a stale value can never leak into
+     * an unrelated later conversation (e.g. a wake-triggered one that raced a "read aloud" tap). */
+    private var pendingSay: String? = null
     private val ticker = object : Runnable {
         override fun run() {
             if (realtime != null) {
@@ -139,6 +146,7 @@ class AssistantService : Service() {
             STOP -> { settings.enabled = false; stopSelf() }
             TALK -> begin()
             END -> finish()
+            SAY -> intent.getStringExtra(EXTRA_TEXT)?.takeIf { it.isNotBlank() }?.let { say(it) }
             "approve", "reject" -> {
                 // MCP approve/reject is Realtime-only; approval is never set during a Live conversation.
                 approval?.let {
@@ -236,6 +244,10 @@ class AssistantService : Service() {
         if (realtime != null || preparing) return
         try {
             if (settings.secret("openai").isBlank()) {
+                // Doesn't reach finish() below, so pendingSay (set by say() just before this begin()
+                // call) needs its own clear here — otherwise it would leak into a later, unrelated
+                // conversation (e.g. a wake-triggered one once a key is finally registered).
+                pendingSay = null
                 val message = if (woken) Status(R.string.status_wake_detected_need_key) else Status(R.string.status_need_openai_key)
                 if (settings.enabled) waitForWake(message) else status = Status(R.string.status_need_openai_key)
                 return
@@ -272,6 +284,39 @@ class AssistantService : Service() {
             }
         } catch (_: Exception) { finish(Status(R.string.status_connect_failed)) }
     }
+    /** Injects [text] as a user turn (§ search cards "read aloud"): cancels an in-flight response
+     * first (`state.responding`) so the reply doesn't talk over/queue behind it, or — if no
+     * conversation is active — starts one and injects [text] once it's ready (no wake chime, since
+     * this isn't a wake-triggered conversation; see [pendingSay]). Realtime only: GPT-Live has no
+     * verified client event for injecting a text user turn (same limitation [checkDebugSay] has
+     * always had), so this just logs a warning — SearchCardsView hides its "Read aloud" button
+     * when `settings.voiceApi == VoiceApi.LIVE` for the same reason, so this path should be rare in
+     * practice. Must run on the main thread (posts there itself, so [onStartCommand]'s SAY handler
+     * doesn't need to). */
+    fun say(text: String) {
+        main.post {
+            val isLive = if (realtime != null) live else settings.voiceApi == VoiceApi.LIVE
+            if (isLive) { android.util.Log.w("Butler", "AssistantService.say() is not supported for the Live voice API; ignoring"); return@post }
+            when {
+                realtime == null -> { pendingSay = text; begin() }
+                state.ready -> sendUserText(text)
+                else -> pendingSay = text
+            }
+        }
+    }
+    /** Sends [text] as a user message turn (conversation.item.create + response.create), canceling an
+     * in-flight response first if one is active — shared by [say] and [checkDebugSay], which only
+     * differ in how they decide what text to send and whether a conversation needs to be started
+     * first. */
+    private fun sendUserText(text: String) {
+        if (state.responding) realtime?.send(JSONObject().put("type", "response.cancel"))
+        userTranscript = text
+        val itemSent = realtime?.send(JSONObject().put("type", "conversation.item.create").put("item", JSONObject()
+            .put("type", "message").put("role", "user").put("content", JSONArray().put(JSONObject()
+                .put("type", "input_text").put("text", text)))))
+        val responseSent = realtime?.send(JSONObject().put("type", "response.create"))
+        if (BuildConfig.DEBUG) android.util.Log.i("Butler", "say sent: item=$itemSent response=$responseSent")
+    }
     /** Debug-only (see docs/architecture.md): reads `debug.butler.say` via reflection, same
      * `SystemProperties.get` pattern as MainActivity's `debug.butler.*` overrides. Returns "" (never
      * null) so blank and "property unset/unreadable" are the same "nothing pending" case. */
@@ -291,12 +336,7 @@ class AssistantService : Service() {
         lastDebugSay = say
         if (live) { android.util.Log.w("Butler", "debug.butler.say is not supported for the Live voice API; ignoring"); return }
         android.util.Log.i("Butler", "debug say: $say")
-        userTranscript = say
-        val itemSent = realtime?.send(JSONObject().put("type", "conversation.item.create").put("item", JSONObject()
-            .put("type", "message").put("role", "user").put("content", JSONArray().put(JSONObject()
-                .put("type", "input_text").put("text", say)))))
-        val responseSent = realtime?.send(JSONObject().put("type", "response.create"))
-        android.util.Log.i("Butler", "debug say sent: item=$itemSent response=$responseSent")
+        sendUserText(say)
     }
     private fun onEvent(e: JSONObject) {
         if (BuildConfig.DEBUG) e.optString("type").let { type ->
@@ -320,6 +360,7 @@ class AssistantService : Service() {
                 if (chimeOnReady) { chimeOnReady = false; WakeChime.play(this) }
                 status = Status(R.string.status_please_speak)
                 logLatency("ready/chime")
+                pendingSay?.let { text -> pendingSay = null; sendUserText(text) }
             }
             "input_audio_buffer.speech_started" -> if (state.speechStarted()) {
                 userTranscript = ""
@@ -510,6 +551,12 @@ class AssistantService : Service() {
         runToolAsync(tool, name, item.optString("arguments"), id) { result ->
             if ((name == "control_devices" && result.optBoolean("done")) ||
                 (name == "home_assistant" && result.optString("type") == "action_done")) { idle.armShort(); homeStateSerial++ }
+            // search_web now runs as a client tool on Live too (see ToolRegistry.liveDefinitions), so
+            // its content array needs the same citations wiring onEvent's Realtime handler already
+            // has (same unconditional reset-per-call behavior, for consistency between transports) —
+            // mirrored here rather than only relying on addLiveCitation, since there is no longer a
+            // hosted web_search call to emit response.output_text.annotation.added events.
+            citations = result.optJSONArray("content")?.toString() ?: ""
             realtime?.send(JSONObject().put("type", "response.item.create").put("item", JSONObject()
                 .put("type", "function_call_output").put("call_id", callId).put("output", result.toString())))
             liveState.toolCallFinished(); maybeLiveFollowup()
@@ -558,7 +605,7 @@ class AssistantService : Service() {
     }
     private fun finish(message: Status? = null) {
         generation++; preparing = false; conversing = false; client.cancel(); realtime?.close(); realtime = null
-        transcript = ""; userTranscript = ""; citations = ""; approval = null; chimeOnReady = false
+        transcript = ""; userTranscript = ""; citations = ""; approval = null; chimeOnReady = false; pendingSay = null
         waitForWake(message)
     }
     override fun onDestroy() {
@@ -570,7 +617,7 @@ class AssistantService : Service() {
         val releaseModel = { kotlin.concurrent.thread(name = "Butler-release-model") { wakeModels.close() }; Unit }
         if (oldWake != null) oldWake.stop(releaseModel) else releaseModel()
         worker.shutdownNow(); wakeLock?.let { if (it.isHeld) it.release() }
-        transcript = ""; userTranscript = ""; citations = ""; approval = null; chimeOnReady = false; status = Status(R.string.status_mic_stopped)
+        transcript = ""; userTranscript = ""; citations = ""; approval = null; chimeOnReady = false; pendingSay = null; status = Status(R.string.status_mic_stopped)
         super.onDestroy()
     }
 }

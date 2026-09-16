@@ -40,6 +40,7 @@ class MainActivity : Activity() {
     private lateinit var smartHome: SmartHomePage
     private lateinit var music: MusicPage
     private lateinit var conversation: ConversationView
+    private lateinit var searchCards: SearchCardsView
     private lateinit var tabStrip: LinearLayout
     private lateinit var tabButtons: List<TextView>
     private lateinit var dots: List<View>
@@ -58,6 +59,14 @@ class MainActivity : Activity() {
     // Debug-only (see debugBeginOverride()): the last debug.butler.begin value already acted on, so a
     // steady non-blank/non-"0" property value doesn't retrigger action(TALK) on every tick.
     private var lastBeginActedOn: String? = null
+    private var lastSearchCardsSerial = 0
+    private var lastCardsShown = false
+    // Debug-only (see debugCardsOverride()): the property value last acted on ("" = untouched, so a
+    // production build's always-blank property never clears a real search's cards) and whether the
+    // debug hook itself is the one currently showing fake cards, so 0/blank only clears when it was
+    // this hook that set them, not on every blank tick.
+    private var lastCardsDebugValue = ""
+    private var cardsDebugActive = false
     /** True while ConversationView is docked (§9/§8) — its state dot/text shares the tab strip's
      *  top-left corner, so the strip fades out for as long as this is true (§ issue 8). */
     private var conversationDocked = false
@@ -100,6 +109,19 @@ class MainActivity : Activity() {
             if (beginOverride.isNullOrBlank() || beginOverride == "0") lastBeginActedOn = null
             else if (beginOverride != lastBeginActedOn) { lastBeginActedOn = beginOverride; action(AssistantService.TALK) }
 
+            // Debug-only: `adb shell setprop debug.butler.cards 1` loads three fake cards into
+            // SearchCards (see SearchCards.debugCards()) so the viewer's layout can be checked
+            // on-device without a real search; 0/blank clears them again, but only when this hook was
+            // the one that showed them — a production build's always-blank property must never clear
+            // a real search's cards (see lastCardsDebugValue/cardsDebugActive's doc comment above).
+            val cardsOverride = debugCardsOverride() ?: ""
+            if (cardsOverride != lastCardsDebugValue) {
+                lastCardsDebugValue = cardsOverride
+                if (cardsOverride.isBlank() || cardsOverride == "0") {
+                    if (cardsDebugActive) { cardsDebugActive = false; SearchCards.clear() }
+                } else { cardsDebugActive = true; SearchCards.publish("Debug cards", SearchCards.debugCards()) }
+            }
+
             val talkOverride = debugTalkOverride()
             if (talkOverride != null) {
                 conversation.update(Status(R.string.status_responding), DEBUG_FAKE_USER_TRANSCRIPT, DEBUG_FAKE_TRANSCRIPT, "", false, true)
@@ -123,17 +145,38 @@ class MainActivity : Activity() {
                 lastHomeStateSerial = AssistantService.homeStateSerial
                 smartHome.refresh(); music.refresh()
             }
+            // Search cards standby viewer (cards-spec.md "Viewer"): a new SearchCards.serial with
+            // cards to show docks the conversation overlay over it, exactly like the weather
+            // auto-switch above; a new serial with nothing to show (a plain-fact search, or the
+            // viewer's own hide()/SearchCards.clear()) hides it instead — "a new search replaces the
+            // cards" covers both directions.
+            if (SearchCards.serial != lastSearchCardsSerial) {
+                lastSearchCardsSerial = SearchCards.serial
+                if (SearchCards.cards.isNotEmpty()) {
+                    searchCards.show(SearchCards.query, SearchCards.cards)
+                    conversation.setDocked(true)
+                    lastTouchAt = SystemClock.elapsedRealtime()
+                } else searchCards.hide()
+            }
+            searchCards.tick(AssistantService.transcript)
+            val cardsShownNow = searchCards.standbyShown
+            if (cardsShownNow != lastCardsShown) { lastCardsShown = cardsShownNow; setChromeVisible(!cardsShownNow && !sheetOpen) }
+
             val conversingNow = AssistantService.conversing
             // Same reasoning as above: the moment a conversation ends, the page it leaves behind (e.g. one
             // the assistant switched to) should get the full 3 minutes again, not whatever was left over
             // from a stale touch before/during the conversation.
             if (lastConversing && !conversingNow) lastTouchAt = SystemClock.elapsedRealtime()
             lastConversing = conversingNow
-            pager.locked = conversingNow || sheetOpen || talkOverride != null
+            pager.locked = conversingNow || sheetOpen || talkOverride != null || cardsShownNow
             // Auto-return (§2): only ever fires away from the clock page, and never mid-conversation
             // (the page is likely docked/driven by the assistant right then, not idly abandoned).
             if (pager.currentPage != 0 && !conversingNow && talkOverride == null &&
                 SystemClock.elapsedRealtime() - lastTouchAt > AUTO_RETURN_MS) pager.setPage(0)
+            // Same idle window hides the search cards standby viewer (reuses AUTO_RETURN_MS/lastTouchAt,
+            // same as the pager above), but never mid-conversation — a docked search result should stay
+            // up while the user keeps talking about it.
+            if (cardsShownNow && !conversingNow && SystemClock.elapsedRealtime() - lastTouchAt > AUTO_RETURN_MS) searchCards.hide()
 
             main.postDelayed(this, 250)
         }
@@ -184,7 +227,9 @@ class MainActivity : Activity() {
         weatherPage = WeatherPage(this, settings)
         clockPage.bind(null, false); weatherPage.bind(null, false) // placeholder until the first refreshWeather() lands
         smartHome = SmartHomePage(this, settings, client, worker).apply {
-            onSheetOpenChanged = { open -> sheetOpen = open; setChromeVisible(!open) }
+            // searchCards is constructed later in this function but only read here once the sheet is
+            // actually toggled by a touch, well after home() has finished building the view tree.
+            onSheetOpenChanged = { open -> sheetOpen = open; setChromeVisible(!open && !searchCards.standbyShown) }
         }
         music = MusicPage(this, settings, client, worker)
         pager = PagerView(this).apply {
@@ -220,6 +265,11 @@ class MainActivity : Activity() {
         dots.forEach { dotsRow.addView(it, LinearLayout.LayoutParams(dp(5), dp(5)).apply { marginStart = dp(4); marginEnd = dp(4) }) }
         root.addView(dotsRow, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply { bottomMargin = dp(12) })
         updateDots(0); updateTabStrip(0, animated = false)
+
+        // Added above the pager, below the conversation overlay (cards-spec.md "Viewer") so
+        // ConversationView's own docked bar still draws on top of it once docked.
+        searchCards = SearchCardsView(this, settings).apply { onReadAloud = { text -> action(AssistantService.SAY, text) } }
+        root.addView(searchCards, FrameLayout.LayoutParams(-1, -1))
 
         conversation = ConversationView(this).apply {
             onEnd = { action(AssistantService.END) }
@@ -283,12 +333,18 @@ class MainActivity : Activity() {
             tabStrip.animate().alpha(0f).setDuration(200).start()
         }
     }
-    private fun action(action: String) {
+    /** [sayText] is only used with [AssistantService.SAY] (SearchCardsView's "Read aloud" button) —
+     * lost on a permission-request retry (the microphone prompt is a rare, one-time gate the user has
+     * almost always already cleared before any card exists to read aloud from), unlike [pendingAction]
+     * itself, which every other caller still relies on. */
+    private fun action(action: String, sayText: String? = null) {
         if (action == AssistantService.STOP) { stopService(Intent(this, AssistantService::class.java)); return }
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             pendingAction = action; requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 10); return
         }
-        startForegroundService(Intent(this, AssistantService::class.java).setAction(action))
+        val intent = Intent(this, AssistantService::class.java).setAction(action)
+        if (sayText != null) intent.putExtra(AssistantService.EXTRA_TEXT, sayText)
+        startForegroundService(intent)
     }
     override fun onRequestPermissionsResult(code: Int, permissions: Array<out String>, results: IntArray) {
         super.onRequestPermissionsResult(code, permissions, results)
@@ -346,6 +402,11 @@ class MainActivity : Activity() {
     // raw property value is turned into a one-shot action(TALK) call.
     private fun debugBeginOverride(): String? = if (!BuildConfig.DEBUG) null else runCatching {
         Class.forName("android.os.SystemProperties").getMethod("get", String::class.java).invoke(null, "debug.butler.begin") as String
+    }.getOrNull()
+    // Debug-only: `adb shell setprop debug.butler.cards 1|0` — see the tick loop above for how the raw
+    // property value is turned into a one-shot SearchCards.publish()/clear() call.
+    private fun debugCardsOverride(): String? = if (!BuildConfig.DEBUG) null else runCatching {
+        Class.forName("android.os.SystemProperties").getMethod("get", String::class.java).invoke(null, "debug.butler.cards") as String
     }.getOrNull()
     private fun showApproval() {
         val item = AssistantService.approval ?: return
