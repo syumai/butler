@@ -5,12 +5,18 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
+import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
+
+private fun urlEncode(value: String): String = URLEncoder.encode(value, "UTF-8")
 
 class ToolClient {
     private val http = OkHttpClient.Builder().callTimeout(45, TimeUnit.SECONDS).build()
     private val haHttp = OkHttpClient.Builder().callTimeout(10, TimeUnit.SECONDS).build()
-    fun cancel() { http.dispatcher.cancelAll(); haHttp.dispatcher.cancelAll() }
+    // Short-timeout client for search-card image resolution (SearchWebTool's ~5s total budget):
+    // one slow host must not eat into the budget the other tiers/items need.
+    private val imageHttp = OkHttpClient.Builder().callTimeout(4, TimeUnit.SECONDS).build()
+    fun cancel() { http.dispatcher.cancelAll(); haHttp.dispatcher.cancelAll(); imageHttp.dispatcher.cancelAll() }
     private fun request(request: Request, client: OkHttpClient = http): JSONObject = client.newCall(request).execute().use {
         check(it.isSuccessful) { "HTTP ${it.code}" }
         val source = it.body!!.source()
@@ -45,6 +51,90 @@ class ToolClient {
         }
         return result.put("content", parts)
     }
+    /** The strict JSON schema `search_web` asks the Responses API for (see [SearchCards.parse] for the
+     * shape it decodes into): `additionalProperties:false` and every property `required` are both
+     * mandatory for OpenAI's `strict:true` mode, and a nullable field (`wikipedia_title`) is expressed
+     * as `"type":["string","null"]` rather than `"required":false` — confirmed against the live API
+     * 2026-09-17 (see cards-spec.md's "Verified facts"). */
+    private val searchCardsSchema = JSONObject("""
+        {"type":"object","properties":{
+            "spoken":{"type":"string"},
+            "items":{"type":"array","maxItems":5,"items":{"type":"object","properties":{
+                "title":{"type":"string"},"description":{"type":"string"},"url":{"type":"string"},
+                "wikipedia_title":{"type":["string","null"]},"image_query":{"type":"string"}
+            },"required":["title","description","url","wikipedia_title","image_query"],"additionalProperties":false}}
+        },"required":["spoken","items"],"additionalProperties":false}
+    """.trimIndent())
+    /** Calls the Responses API with `tools:[{"type":"web_search"}]`, `tool_choice:"required"` and
+     * [searchCardsSchema] as a strict `text.format`, returning the raw `output_text` JSON string (the
+     * caller, [dev.syumai.butler.tools.SearchWebTool], parses it with [SearchCards.parse]). Throws
+     * (propagating to `AssistantService.runToolAsync`'s existing `{"error":...}` fallback) on any HTTP
+     * or shape failure — there is deliberately no `output_text` fallback here, only in the caller,
+     * since a call failure and a parse failure need different recovery (retry-as-error vs.
+     * fall back to [search]). */
+    fun searchCards(settings: Settings, input: String): String {
+        val body = JSONObject().put("model", settings.get("searchModel", "gpt-5.6-luna"))
+            .put("store", false).put("max_output_tokens", 1800)
+            .put("tools", JSONArray().put(JSONObject().put("type", "web_search")))
+            .put("tool_choice", "required").put("input", input)
+            .put("text", JSONObject().put("format", JSONObject().put("type", "json_schema")
+                .put("name", "search_cards").put("strict", true).put("schema", searchCardsSchema)))
+        val response = request(Request.Builder().url("https://api.openai.com/v1/responses")
+            .header("Authorization", "Bearer ${settings.secret("openai")}")
+            .post(body.toString().toRequestBody("application/json".toMediaType())).build())
+        val output = response.optJSONArray("output") ?: JSONArray()
+        for (i in 0 until output.length()) {
+            val item = output.getJSONObject(i)
+            if (item.optString("type") != "message") continue
+            val content = item.optJSONArray("content") ?: continue
+            for (j in 0 until content.length()) {
+                val part = content.getJSONObject(j)
+                if (part.optString("type") == "output_text") return part.optString("text")
+            }
+        }
+        error("Responses output had no output_text part")
+    }
+    /** Tier 1 of search-card image resolution (see docs/architecture.md "Search cards"): Google
+     * Programmable Search's image search, used only when both `googleCseKey`/`googleCseCx` are set.
+     * Returns the first result's full-size image URL, or null on any failure/empty result — callers
+     * fall through to the Wikipedia tier. */
+    fun googleImageSearch(settings: Settings, query: String): String? = runCatching {
+        val key = settings.secret("googleCseKey"); val cx = settings.get("googleCseCx")
+        if (key.isBlank() || cx.isBlank()) return null
+        val url = "https://www.googleapis.com/customsearch/v1?key=${urlEncode(key)}&cx=${urlEncode(cx)}" +
+            "&searchType=image&num=1&safe=active&q=${urlEncode(query)}"
+        val response = request(Request.Builder().url(url).build(), imageHttp)
+        response.optJSONArray("items")?.optJSONObject(0)?.optString("link")?.takeIf { it.isNotBlank() }
+    }.getOrNull()
+    /** Tier 2: Wikipedia's REST summary endpoint for [title] (real subject photo, not a site-wide
+     * logo — see cards-spec.md). Falls back to the tolerant search-by-title endpoint when the exact
+     * title 404s. A descriptive User-Agent is sent per Wikimedia's API etiquette policy. */
+    fun wikipediaThumbnail(title: String, lang: String = "ja"): String? = runCatching {
+        fun get(url: String): JSONObject? {
+            val call = imageHttp.newCall(Request.Builder().url(url)
+                .header("User-Agent", "Butler/${BuildConfig.VERSION_NAME} (https://github.com/syumai/butler)").build())
+            return call.execute().use { resp ->
+                if (!resp.isSuccessful) return@use null
+                val source = resp.body!!.source()
+                if (source.request(1_000_001)) null else JSONObject(source.readUtf8())
+            }
+        }
+        // The search-fallback endpoint's thumbnail.url is protocol-relative ("//thumb.wikimedia.org/...");
+        // the summary endpoint's own thumbnail.source is always absolute https already.
+        fun normalize(url: String?): String? = url?.takeIf { it.isNotBlank() }?.let { if (it.startsWith("//")) "https:$it" else it }
+        val summary = get(SearchCards.wikipediaSummaryUrl(title, lang))
+        normalize(summary?.optJSONObject("thumbnail")?.optString("source"))?.let { return it }
+        val searchResult = get(SearchCards.wikipediaSearchUrl(title, lang))
+        normalize(searchResult?.optJSONArray("pages")?.optJSONObject(0)?.optJSONObject("thumbnail")?.optString("url"))
+    }.getOrNull()
+    /** Fetches raw image bytes for a card picture, capped at 3 MB; null on any failure/oversize. */
+    fun fetchImageBytes(url: String): ByteArray? = runCatching {
+        imageHttp.newCall(Request.Builder().url(url).build()).execute().use {
+            if (!it.isSuccessful) return@use null
+            val source = it.body!!.source()
+            if (source.request(3 * 1_048_576 + 1)) null else source.readByteArray()
+        }
+    }.getOrNull()
     /** Current conditions plus yesterday/today/tomorrow daily highs/lows and 72h of hourly weather_code +
      * precipitation_probability, for [Forecast.parse] ([WeatherStore]/`get_home_weather`). past_days=1 is what
      * lets [Forecast] compute today's high/low change vs. yesterday. */

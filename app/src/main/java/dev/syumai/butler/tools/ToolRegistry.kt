@@ -22,8 +22,15 @@ import org.json.JSONObject
  *
  * [definitions] assembles the Realtime `tools` array (executable tools, then end_conversation, then
  * the optional hosted MCP tool); [liveDefinitions] assembles the GPT-Live delegation `tools` array
- * instead (hosted `web_search` in place of [SearchWebTool], then the other executable tools, then
- * end_conversation — no MCP entry, since Live delegation only accepts `function`/`web_search` tools).
+ * instead (every executable tool including [SearchWebTool], then end_conversation — no MCP entry,
+ * since Live delegation only accepts `function`/`web_search` tools). [SearchWebTool] used to be
+ * swapped out for Live in favor of the hosted `web_search` tool type; that hosted tool can't return
+ * picture cards (see cards-spec.md "Search cards"), so Live now calls the same client-side
+ * `search_web` function Realtime does, and its result's `content` array feeds
+ * `AssistantService.citations` from the ordinary function_call_output path, same as any other tool —
+ * `AssistantService.addLiveCitation` (fed by `response.output_text.annotation.added`) is kept since
+ * the delegation backend can still cite pages on its own even without a hosted search tool, but a
+ * hosted `web_search` call itself no longer happens.
  */
 class ToolRegistry(private val context: Context, settings: Settings, client: ToolClient) {
     companion object {
@@ -64,13 +71,14 @@ class ToolRegistry(private val context: Context, settings: Settings, client: Too
     }
 
     /**
-     * GPT-Live delegation tool definitions: hosted `web_search` first (it replaces [SearchWebTool],
-     * which is excluded here), then every other executable tool's definition, then end_conversation.
-     * No MCP entry — Live delegation only accepts `function` and `web_search` tool types.
+     * GPT-Live delegation tool definitions: every executable tool's definition (including
+     * [SearchWebTool] — see the class doc comment for why Live no longer swaps it for the hosted
+     * `web_search` tool type), then end_conversation. No MCP entry — Live delegation only accepts
+     * `function` and `web_search` tool types.
      */
     fun liveDefinitions(): JSONArray {
-        val defs = JSONArray().put(JSONObject().put("type", "web_search"))
-        tools.filterNot { it is SearchWebTool }.forEach { defs.put(it.definition()) }
+        val defs = JSONArray()
+        tools.forEach { defs.put(it.definition()) }
         defs.put(endConversation(context))
         return defs
     }

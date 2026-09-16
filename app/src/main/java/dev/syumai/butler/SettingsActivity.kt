@@ -326,6 +326,23 @@ class SettingsActivity : Activity() {
                 if (value.isBlank()) false else { settings.set("searchModel", value); applyServiceState(); renderCategory(selected); true }
             }
         }
+        // Search cards' optional Google Programmable Search image tier (docs/architecture.md "Search
+        // cards") — both fields are optional; without them cards still work, just with Wikipedia-only
+        // pictures (see the helper text in each edit dialog).
+        addRow(rightPane, getString(R.string.settings_row_google_cse_key), if (settings.secret("googleCseKey").isNotBlank()) getString(R.string.settings_value_set) else getString(R.string.settings_value_not_set)) {
+            showEditDialog(getString(R.string.settings_row_google_cse_key), "", secret = true, inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD,
+                helper = getString(R.string.settings_helper_google_cse_key),
+                onClear = { settings.setSecret("googleCseKey", ""); renderCategory(selected) }) { value ->
+                if (value.isNotBlank()) settings.setSecret("googleCseKey", value)
+                renderCategory(selected); true
+            }
+        }
+        addRow(rightPane, getString(R.string.settings_row_google_cse_cx), settings.get("googleCseCx").ifBlank { getString(R.string.settings_value_not_set) }) {
+            showEditDialog(getString(R.string.settings_row_google_cse_cx), settings.get("googleCseCx"), secret = false, inputType = InputType.TYPE_CLASS_TEXT,
+                helper = getString(R.string.settings_helper_google_cse_cx)) { value ->
+                settings.set("googleCseCx", value); renderCategory(selected); true
+            }
+        }
         addRow(rightPane, getString(R.string.settings_row_timeout), getString(R.string.settings_seconds_format, settings.get("timeout", "30"))) {
             showEditDialog(getString(R.string.settings_row_timeout), settings.get("timeout", "30"), secret = false, inputType = InputType.TYPE_CLASS_NUMBER,
                 helper = getString(R.string.settings_helper_timeout_range)) { value ->
