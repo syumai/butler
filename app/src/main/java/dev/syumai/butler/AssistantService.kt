@@ -299,15 +299,28 @@ class AssistantService : Service() {
             if (isLive) { android.util.Log.w("Butler", "AssistantService.say() is not supported for the Live voice API; ignoring"); return@post }
             when {
                 realtime == null -> { pendingSay = text; begin() }
-                state.ready -> sendUserText(text)
+                state.ready -> readAloud(text)
                 else -> pendingSay = text
             }
         }
     }
+    /** Has the model read [text] verbatim: an out-of-band `response.create` (`conversation: "none"`,
+     * so it is neither added to the conversation nor treated as something the user said) whose
+     * per-response `instructions` carry the text with a "read exactly this" prompt. The first
+     * version injected the text as a *user* turn via [sendUserText], and the model naturally
+     * answered it instead of reading it — reported by the user on 2026-09-17. Cancels an in-flight
+     * response first so the reading doesn't queue behind it. */
+    private fun readAloud(text: String) {
+        if (state.responding) realtime?.send(JSONObject().put("type", "response.cancel"))
+        val sent = realtime?.send(JSONObject().put("type", "response.create").put("response", JSONObject()
+            .put("conversation", "none")
+            .put("output_modalities", JSONArray().put("audio"))
+            .put("instructions", getString(R.string.prompt_read_aloud, text))))
+        if (BuildConfig.DEBUG) android.util.Log.i("Butler", "read aloud sent=$sent chars=${text.length}")
+    }
     /** Sends [text] as a user message turn (conversation.item.create + response.create), canceling an
-     * in-flight response first if one is active — shared by [say] and [checkDebugSay], which only
-     * differ in how they decide what text to send and whether a conversation needs to be started
-     * first. */
+     * in-flight response first if one is active — used by [checkDebugSay] (the adb hook stands in
+     * for the user speaking, so a user turn is exactly right there; [say] does not use this). */
     private fun sendUserText(text: String) {
         if (state.responding) realtime?.send(JSONObject().put("type", "response.cancel"))
         userTranscript = text
@@ -360,7 +373,7 @@ class AssistantService : Service() {
                 if (chimeOnReady) { chimeOnReady = false; WakeChime.play(this) }
                 status = Status(R.string.status_please_speak)
                 logLatency("ready/chime")
-                pendingSay?.let { text -> pendingSay = null; sendUserText(text) }
+                pendingSay?.let { text -> pendingSay = null; readAloud(text) }
             }
             "input_audio_buffer.speech_started" -> if (state.speechStarted()) {
                 userTranscript = ""

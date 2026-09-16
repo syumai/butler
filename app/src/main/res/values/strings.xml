@@ -288,4 +288,5 @@
     <string name="cards_close_description">Close</string>
     <string name="cards_back_description">Back</string>
     <string name="cards_read_aloud">Read aloud</string>
+    <string name="prompt_read_aloud">Read the following text aloud exactly as written, in a natural voice, without adding, summarizing or commenting on anything:\n%1$s</string>
 </resources>

@@ -288,4 +288,5 @@
     <string name="cards_close_description">閉じる</string>
     <string name="cards_back_description">戻る</string>
     <string name="cards_read_aloud">読み上げる</string>
+    <string name="prompt_read_aloud">次の文章を、何も付け加えず要約もせず、書かれているとおりに自然な声で読み上げてください:\n%1$s</string>
 </resources>
