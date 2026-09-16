@@ -104,7 +104,7 @@ Settings -> Wake, with Vosk remaining selectable as the alternative. See
 numbers come from, and `.claude/skills/wake-tuning/SKILL.md` for how to collect more real-speaker
 recordings and re-evaluate either engine.
 
-## 2026-09-17: "Hey Butler" evaluated and not shipped for Julius
+## 2026-09-17: "Hey Butler" evaluated and shipped for Julius
 
 Vosk's wake phrase was extended to also accept "Hey Butler" (Japanese
 pronunciation), alongside "Hello Butler" — see `third_party/vosk/README.md`.
@@ -112,7 +112,10 @@ The same addition was tried for Julius's grammar (`ヘイバトラー`, added to
 the `WAKE` category of `scripts/julius-wake/wake.voca`/`wake.dict`) and
 evaluated offline with `scripts/julius-eval.py` against the same recordings
 as the 2026-09-15 comparison above, plus the full ~92 minutes of LibriVox
-(not just `gongitsune_01`) and the macOS `say` `chat`/`confusable` sets:
+(not just `gongitsune_01`) and the macOS `say` `chat`/`confusable` sets. A
+first pass, gating on `cmscore1` alone (the confidence threshold used for
+`ハローバトラー`), could not separate ヘイバトラー's genuine hits from its
+false wakes — their `cmscore1` ranges overlap:
 
 | set | ヘイバトラー false wakes, 4 pronunciation variants | ヘイバトラー false wakes, 2 variants (`h e:` dropped) |
 |---|---:|---:|
@@ -121,24 +124,39 @@ as the 2026-09-15 comparison above, plus the full ~92 minutes of LibriVox
 | `say` chat set (9 voices) | 0 | 0 |
 | `say` confusable set (9 voices) | 0 (its 7/voice false wakes stayed `ハローバトラー`, unaffected) | 0 (same) |
 
-Both attempts produce false wakes on real Japanese speech (LibriVox), which
-the existing `ハローバトラー`-only grammar does not (0 across the same
-~92 minutes). Dropping the grammar's two most-confusable "Hey" variants
-(`h e: b a t o r a:`/`h e: b a t o r a`, the long-vowel pronunciation) — the
-prescribed first mitigation — reduced but did not eliminate this. Per this
-project's bar (0 false wakes on real negative speech, matching what
-`ハローバトラー` alone already achieves), "Hey Butler" was **not** added to
-the shipped Julius grammar; `scripts/julius-wake/wake.voca`/`wake.dict` were
-reverted, and `WakePhrase.juliusWords` has just the one entry. See
-`scripts/julius-wake/README.md`'s "2026-09-17: Hey Butler" section for the
-full per-file breakdown and the false-positive segments themselves.
+A second pass found that a *structural* signal does separate them cleanly,
+even though confidence alone can't: every false wake above sat inside
+running speech, decoded with 11+ `<garbage>` filler words surrounding the
+wake word, while every genuine wake utterance in `hello-butler-ja-rec1.pcm`
+is a short, standalone segment with at most 6 fillers. `scripts/julius-eval.py`
+gained an optional `--max-fillers N` gate (reject a hit whose recognized
+sentence has more than `N` total `<garbage>` words) on top of `--threshold`;
+swept with the shipped `--threshold 0.05 --penalty1 -0.8 --penalty2 -0.8`
+across `max_fillers` ∈ {4, 6, 8, 10}, every value from 6 up produced **zero**
+false wakes on the user negative recording, all ~92 minutes of LibriVox, and
+the `say` confusable set (whose `ハローバトラー` false wakes turned out to
+also sit in long, high-filler-count segments, so the same gate fixes them
+too, unmodified grammar entries notwithstanding), while still hitting
+11/11 of rec1's spoken utterances. `--max-fillers 10` — the loosest (most
+permissive) swept value that still met the goal — was chosen, kept with the
+2-variant (`h e i` only) grammar rather than the 4-variant one (adding back
+the `h e:` variants raises the *baseline* false-wake count the gate has to
+suppress, 8 vs 5 on LibriVox, for no additional true positives). See
+`scripts/julius-wake/README.md`'s "2026-09-17: Hey Butler, take two — a
+structural gate" section for the full sweep table and per-file breakdown.
 
-Vosk's own addition was unaffected by this finding — its grammar-restricted
-ASR plus `VoskWake.hit`'s word-adjacency rule (an exact two-word match in a
-final result) is a different detection mechanism from Julius's phone-loop
-confidence race, so "Hey Butler" ships there. Since Julius is the default
-engine, "Hey Butler" is currently detected only when Vosk is selected in
-Settings → Wake.
+Julius's `JuliusWake` (`app/src/main/java/dev/syumai/butler/JuliusWake.kt`)
+now judges a whole `<RECOGOUT>` block (`JuliusWake.BlockParser`) rather
+than a single `<WHYPO>` line, applying both the `cmscore1 >= 0.05` and
+`<garbage> count <= 10` gates together; `WakePhrase.juliusWords`
+(`LocalWakeWordEngine.kt`) has two entries, `"ハローバトラー"` and
+`"ヘイバトラー"`. Vosk's detection mechanism (an exact two-word adjacency
+match in a final ASR result) was never affected by any of this — it ships
+"Hey Butler" independently, as before. **Recall for a real speaker actually
+saying "Hey Butler" is unverified**: no real-voice recording of "Hey
+Butler" exists; the sole ヘイバトラー hit in `hello-butler-ja-rec1.pcm` is
+a misrecognized "Hello Butler" utterance, not a genuine "Hey Butler" one,
+so this should be checked on-device before relying on it.
 
 ## License files
 

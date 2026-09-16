@@ -27,15 +27,20 @@ import java.nio.ByteOrder
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.concurrent.thread
 
-// Vosk detects both phrases; Julius detects only ハローバトラー. JuliusWakeDecoder now judges a
-// whole <RECOGOUT> block (JuliusWake.BlockParser) instead of a single <WHYPO> line, gating on both
-// per-word confidence (CM) and the total count of surrounding <garbage> filler words in the same
-// block -- see JuliusWake.BlockParser's doc comment and scripts/julius-wake/README.md's "2026-09-17:
-// Hey Butler" section for why: CM alone can't separate a candidate second wake word's genuine hits
-// from its false wakes on real unrelated speech (their ranges overlap), but the filler count can,
-// since false wakes sit inside long runs of speech while genuine hits are short, standalone segments.
+// Vosk and Julius both detect ハローバトラー and ヘイバトラー. ヘイバトラー was added to Julius's
+// phone-loop grammar (scripts/julius-wake/wake.voca/wake.dict) on 2026-09-17 after a first attempt
+// (same day) found its per-word confidence score (CM) alone couldn't separate genuine wake utterances
+// from false wakes on real unrelated Japanese speech (LibriVox): both ranges overlapped. A second
+// offline sweep (scripts/julius-eval.py, see scripts/julius-wake/README.md's "2026-09-17: Hey Butler"
+// section and third_party/julius/README.md) found a *structural* gate does separate them cleanly --
+// every false wake sat inside running speech with many surrounding `<garbage>` filler words, while
+// genuine wake utterances are short, standalone segments with few fillers -- so JuliusWakeDecoder now
+// judges a whole <RECOGOUT> block (JuliusWake.BlockParser) rather than a single <WHYPO> line, gating
+// on both CM and total filler count. Recall for a real speaker saying "Hey Butler" specifically is
+// unverified: no real-voice recording of "Hey Butler" exists, only rec1's single ヘイバトラー hit,
+// which is actually a misrecognized "Hello Butler" utterance -- check on-device before relying on it.
 enum class WakePhrase(val label: String, val voskPhrases: List<String>, val juliusWords: List<String>) {
-    HELLO_BUTLER("Hello Butler / Hey Butler", listOf("ハロー バトラー", "ヘイ バトラー"), listOf("ハローバトラー")),
+    HELLO_BUTLER("Hello Butler / Hey Butler", listOf("ハロー バトラー", "ヘイ バトラー"), listOf("ハローバトラー", "ヘイバトラー")),
 }
 
 /** The on-device decoder that watches the standby microphone stream. Samples are raw 16-bit PCM
