@@ -43,4 +43,58 @@ object JuliusWake {
         val cm = attrs["CM"]?.toDoubleOrNull() ?: return false
         return cm >= threshold
     }
+
+    /**
+     * Judges a whole `<RECOGOUT>` block at once instead of any single `<WHYPO>` line in isolation.
+     * [hit] alone (a confidence threshold on one WAKE `<WHYPO>` line) cannot separate genuine wake
+     * utterances from false wakes: an offline sweep (`scripts/julius-eval.py`, see
+     * `scripts/julius-wake/README.md`'s "2026-09-17: Hey Butler" section) found their `CM` ranges
+     * overlap, but their *structure* doesn't — every false wake sat inside running speech, decoded with
+     * many `<garbage>` filler words surrounding the wake word, while genuine wake utterances are short,
+     * standalone segments with few fillers. [feed] accumulates one call's worth of the sequence of lines
+     * `readModule` reads from the module socket (across possibly many `<RECOGOUT>` blocks, one per VAD
+     * segment) and reports a hit only when a completed block both had a WAKE `<WHYPO>` with `CM >=`
+     * [threshold] AND at most [maxFillers] total `<garbage>` `<WHYPO>` lines in that same block.
+     *
+     * Call [feed] once per line read from the module socket, in order. It returns true exactly on the
+     * line that completes a hitting block (the `.` terminator); every other line — including every line
+     * of a non-hitting block, and any status line between blocks (`<INPUT STATUS="..." .../>` etc.,
+     * which don't start with `<RECOGOUT`/`<WHYPO` and so are ignored) — returns false. Seeing a new
+     * `<RECOGOUT` resets any in-progress accumulation (so a malformed/unterminated block never leaks
+     * into the next one), matching how [readModule] just keeps reading lines forever across many
+     * segments. Not thread-safe; one instance is owned by one [JuliusWakeDecoder] and fed from its single
+     * module-reader thread.
+     */
+    class BlockParser(
+        private val wakeWords: Collection<String>,
+        private val threshold: Double,
+        private val maxFillers: Int,
+    ) {
+        private var inBlock = false
+        private var fillerCount = 0
+        private var wakeHit = false
+
+        fun feed(line: String): Boolean {
+            val trimmed = line.trim()
+            when {
+                trimmed.startsWith("<RECOGOUT") -> {
+                    inBlock = true; fillerCount = 0; wakeHit = false
+                }
+                trimmed == "." -> {
+                    val result = inBlock && wakeHit && fillerCount <= maxFillers
+                    inBlock = false; fillerCount = 0; wakeHit = false
+                    return result
+                }
+                inBlock && trimmed.startsWith("<WHYPO") -> {
+                    val attrs = ATTR.findAll(trimmed).associate { it.groupValues[1] to it.groupValues[2] }
+                    if (attrs["WORD"] == "<garbage>") fillerCount++
+                    if (attrs["WORD"] in wakeWords) {
+                        val cm = attrs["CM"]?.toDoubleOrNull()
+                        if (cm != null && cm >= threshold) wakeHit = true
+                    }
+                }
+            }
+            return false
+        }
+    }
 }
