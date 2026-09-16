@@ -2,6 +2,9 @@ package dev.syumai.butler
 
 import android.app.*
 import android.content.Intent
+import android.net.ConnectivityManager
+import android.net.LinkProperties
+import android.net.Network
 import android.os.*
 import dev.syumai.butler.tools.Tool
 import dev.syumai.butler.tools.ToolRegistry
@@ -41,6 +44,33 @@ class AssistantService : Service() {
     private var preparing = false
     private var destroyed = false
     private var realtime: WebRtcClient? = null
+    /** A WebRTC peer connection built (PeerConnectionFactory/ADM/data channel/offer, ICE gathering
+     * started) but not yet connected to a signaling backend — see WebRtcClient.prepare(). Built as soon
+     * as the wake engine reports ready (so standby is the only time this competes with Julius startup
+     * for CPU), consumed by begin() so the ~370ms ICE-gathering leg of the connect timeline is already
+     * done by the time a conversation actually starts. Null while a conversation is in progress. */
+    private var prepared: WebRtcClient? = null
+    /** SystemClock.elapsedRealtime() of the last [preparePeer] call, throttling rebuilds triggered by
+     * [networkCallback] (connectivity flapping should not rebuild on every single callback). */
+    private var lastPrepareAt = 0L
+    /** How stale a [prepared] client may be before [begin] discards it and builds a fresh one instead:
+     * host ICE candidates gathered long ago may no longer be reachable (e.g. the device slept/roamed). */
+    private val preparedMaxAgeMs = 30 * 60_000L
+    /** SystemClock.elapsedRealtime() when the wake engine's detected() callback fired, the latency-log
+     * baseline for a woken conversation (see [logLatency]); begin() itself is the baseline for a TALK-
+     * triggered one. Debug builds only. */
+    private var wakeDetectedAt = 0L
+    private var latencyBaseMs = 0L
+    private val connectivity by lazy { getSystemService(ConnectivityManager::class.java) }
+    /** Host ICE candidates in a [prepared] client's already-gathered offer point at addresses on
+     * whatever network was active at prepare() time; a network change while it's sitting idle in
+     * standby can make them stale, so any change (available/lost/link properties) rebuilds it — throttled
+     * via [lastPrepareAt] since these can fire in quick bursts. Registered for the service's lifetime. */
+    private val networkCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) { main.post { rebuildPrepared() } }
+        override fun onLost(network: Network) { main.post { rebuildPrepared() } }
+        override fun onLinkPropertiesChanged(network: Network, linkProperties: LinkProperties) { main.post { rebuildPrepared() } }
+    }
     /** True for the current conversation when settings.voiceApi selected GPT-Live over Realtime. */
     private var live = false
     private var wakeLock: PowerManager.WakeLock? = null
@@ -100,6 +130,7 @@ class AssistantService : Service() {
             .setContentTitle("Butler").setContentText(getString(R.string.notification_content_text)).setContentIntent(open)
             .addAction(0, getString(R.string.notification_action_stop), stop).build())
         wakeLock = getSystemService(PowerManager::class.java).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Butler:Listening").apply { acquire() }
+        connectivity.registerDefaultNetworkCallback(networkCallback)
         main.post(ticker)
     }
     override fun onBind(intent: Intent?) = null
@@ -140,14 +171,66 @@ class AssistantService : Service() {
                     // Prime the pooled signaling connection as soon as standby begins, well ahead of
                     // any wake detection — see SignalingHttp's doc comment.
                     SignalingHttp.warm()
+                    // Built right after the wake engine's own AudioRecord starts, not before, so Julius'
+                    // process startup and this don't compete for CPU during the more latency-sensitive
+                    // wake-detector init.
+                    preparePeer()
                 } },
-                detected = { if (id == wakeGeneration) { wake = null; begin(woken = true) } },
+                detected = { if (id == wakeGeneration) { wakeDetectedAt = SystemClock.elapsedRealtime(); wake = null; begin(woken = true) } },
                 failed = { if (id == wakeGeneration) { wake = null; status = Status(R.string.status_wake_detect_failed) } },
                 // Speculative re-warm on speech onset: the pooled connection from the ready callback
                 // above may have gone idle by the time the user actually speaks the wake phrase.
                 speech = { if (id == wakeGeneration) SignalingHttp.warm() })
             wake!!.start()
         }
+    }
+    /** Builds and [WebRtcClient.prepare]s a fresh standby peer connection, replacing [prepared] on
+     * success. A [WebRtcClient.prepare] failure (synchronous) or an async SDP/ICE failure reported via
+     * onBroken just leaves [prepared] unset — begin() falls back to building one inline in that case, at
+     * the cost of the ICE-gathering time this whole mechanism exists to hide. */
+    private fun preparePeer() {
+        if (prepared != null || realtime != null) return
+        lastPrepareAt = SystemClock.elapsedRealtime()
+        val client = WebRtcClient(this)
+        runCatching { client.prepare(onBroken = { if (prepared === client) prepared = null }) }
+            .onSuccess { prepared = client }
+            .onFailure { if (BuildConfig.DEBUG) android.util.Log.w("Butler", "WebRtcClient.prepare() failed", it) }
+    }
+    /** Host ICE candidates in an already-gathered offer point at addresses on whatever network was
+     * active at prepare() time; discard and rebuild [prepared] on any connectivity change while it's
+     * sitting idle in standby, throttled to avoid rebuilding on every event in a connectivity flap. Only
+     * acts while actually in standby with a prepared client — a live conversation's [realtime] client is
+     * left alone. */
+    private fun rebuildPrepared() {
+        if (prepared == null || realtime != null) return
+        if (SystemClock.elapsedRealtime() - lastPrepareAt < 2_000) return
+        if (BuildConfig.DEBUG) android.util.Log.d("Butler", "latency: rebuilding prepared WebRTC client (network change)")
+        prepared?.close(); prepared = null
+        preparePeer()
+    }
+    /** Picks up [prepared] if it's present and not older than [preparedMaxAgeMs], else builds and
+     * prepares a fresh client inline (paying its ICE-gathering cost synchronously here instead). Debug
+     * builds log which path was taken. */
+    private fun takePreparedClient(): WebRtcClient {
+        val existing = prepared
+        val fresh = existing != null && SystemClock.elapsedRealtime() - existing.preparedAt < preparedMaxAgeMs
+        if (existing != null && fresh) {
+            prepared = null
+            if (BuildConfig.DEBUG) android.util.Log.d("Butler", "latency: using prepared WebRTC client")
+            return existing
+        }
+        existing?.close(); prepared = null
+        if (BuildConfig.DEBUG) android.util.Log.d("Butler", "latency: building WebRTC client inline (" + (if (existing == null) "none prepared" else "stale") + ")")
+        val client = WebRtcClient(this)
+        client.prepare()
+        return client
+    }
+    /** Debug-only (see docs/architecture.md "Debug timing log"): logs one connect-timeline milestone,
+     * tag Butler prefix "latency:", with ms elapsed since [wakeDetectedAt] (a woken conversation) or
+     * since begin() itself (the TALK path) — see [latencyBaseMs], set in begin(). */
+    private fun logLatency(tag: String) {
+        if (!BuildConfig.DEBUG) return
+        android.util.Log.d("Butler", "latency: $tag t=${SystemClock.elapsedRealtime() - latencyBaseMs}ms")
     }
     private fun begin(woken: Boolean = false) {
         if (realtime != null || preparing) return
@@ -171,14 +254,23 @@ class AssistantService : Service() {
             idle = IdlePolicy(settings.timeoutSeconds * 1000, POST_ACTION_IDLE_MS); client = ToolClient(); registry = ToolRegistry(this, settings, client)
             status = Status(R.string.status_connecting)
             val id = generation
+            latencyBaseMs = if (woken) wakeDetectedAt else startedAt
+            logLatency("begin")
             // Tools travel with the initial call config now (§ RealtimeSignaling), not a follow-up
             // session.update once session.created arrives — see onEvent's session.created handling below.
             val signaling: Signaling = if (live) LiveSignaling(this, settings, registry) else RealtimeSignaling(this, settings, registry.definitions())
-            realtime = WebRtcClient(this, signaling, { if (generation == id) runCatching { if (live) onLiveEvent(it) else onEvent(it) }.onFailure { error ->
+            val onWebRtcEvent: (JSONObject) -> Unit = { if (generation == id) runCatching { if (live) onLiveEvent(it) else onEvent(it) }.onFailure { error ->
                 android.util.Log.e("Butler", "Event ${it.optString("type")}: ${error.javaClass.simpleName} at ${error.stackTrace.take(6).joinToString()}")
                 finish(Status(R.string.status_event_process_failed))
-            } }, { if (generation == id) finish(it) })
-            runCatching { realtime!!.start() }.onFailure { finish(Status(R.string.status_connect_failed)) }
+            } }
+            val onWebRtcFailure: (Status) -> Unit = { if (generation == id) finish(it) }
+            val onMilestone: (String) -> Unit = { if (generation == id) logLatency(it) }
+            runCatching {
+                val client = takePreparedClient()
+                realtime = client
+                logLatency("connect() called")
+                check(client.connect(signaling, onWebRtcEvent, onWebRtcFailure, onMilestone)) { "WebRTC connect() failed (no audio focus, or client broken)" }
+            }.onFailure { realtime?.close(); realtime = null; finish(Status(R.string.status_connect_failed)) }
             }
         } catch (_: Exception) { finish(Status(R.string.status_connect_failed)) }
     }
@@ -222,6 +314,7 @@ class AssistantService : Service() {
             // Self-contained on purpose (see docs/architecture.md) in case the endpoint turns out not to
             // accept tools this way and this needs reverting.
             "session.created" -> {
+                logLatency("session.created")
                 if (BuildConfig.DEBUG) {
                     val toolCount = e.optJSONObject("session")?.optJSONArray("tools")?.length() ?: 0
                     android.util.Log.d("Butler", "session.created: session.tools=$toolCount")
@@ -230,6 +323,7 @@ class AssistantService : Service() {
                     realtime?.enableMicrophone()
                     if (chimeOnReady) { chimeOnReady = false; WakeChime.play(this) }
                     status = Status(R.string.status_please_speak)
+                    logLatency("ready/chime")
                 }
             }
             "session.updated" -> Unit
@@ -332,6 +426,7 @@ class AssistantService : Service() {
                 realtime?.enableMicrophone()
                 if (chimeOnReady) { chimeOnReady = false; WakeChime.play(this) }
                 status = Status(R.string.status_please_speak)
+                logLatency("ready/chime")
                 if (BuildConfig.DEBUG) android.util.Log.i("Butler", "Live session ${e.optJSONObject("session")?.optString("id")}")
             }
             "session.input_transcript.delta" -> {
@@ -474,6 +569,8 @@ class AssistantService : Service() {
     }
     override fun onDestroy() {
         destroyed = true; preparing = false; conversing = false; generation++; main.removeCallbacksAndMessages(null); client.cancel(); realtime?.close(); realtime = null
+        prepared?.close(); prepared = null
+        runCatching { connectivity.unregisterNetworkCallback(networkCallback) }
         wakeGeneration++
         val oldWake = wake; wake = null
         val releaseModel = { kotlin.concurrent.thread(name = "Butler-release-model") { wakeModels.close() }; Unit }

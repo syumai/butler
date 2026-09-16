@@ -40,7 +40,7 @@ The build uses JDK 17 or 21, and Android SDK 35 / Build Tools 35.0.0. In this wo
 5. Turn on "Listen for wake phrase" (呼びかけを待つ in Japanese) and grant microphone permission.
 6. Say "Hello Butler" (Japanese pronunciation "ハロー、バトラー" — English pronunciation is not detected) and, after "Please speak" is shown, start talking (in English by default, or Japanese if the device language is Japanese).
 
-Wake word detection is entirely self-contained via the bundled Vosk model — no account, AccessKey, or runtime download is required. No Realtime connection is created while on standby, and the recording used for detection is never reused for or sent to the conversation session. WebRTC starts only after the on-device detector has released the microphone. Wake phrase detection itself works even without an OpenAI API key configured; a setup prompt is shown after detection in that case.
+Wake word detection is entirely self-contained via the bundled on-device model — no account, AccessKey, or runtime download is required. No signaling connection to the Realtime/GPT-Live backend is made while on standby, and the recording used for detection is never reused for or sent to the conversation session; a WebRTC peer connection is pre-built (to shave connection latency once the wake phrase is heard) as soon as the detector reports ready, but it neither touches the microphone nor talks to the backend until a conversation actually starts, which only happens after the on-device detector has released the microphone. Wake phrase detection itself works even without an OpenAI API key configured; a setup prompt is shown after detection in that case.
 
 ### Home Assistant setup
 
