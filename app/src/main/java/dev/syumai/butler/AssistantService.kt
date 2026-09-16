@@ -171,7 +171,9 @@ class AssistantService : Service() {
             idle = IdlePolicy(settings.timeoutSeconds * 1000, POST_ACTION_IDLE_MS); client = ToolClient(); registry = ToolRegistry(this, settings, client)
             status = Status(R.string.status_connecting)
             val id = generation
-            val signaling: Signaling = if (live) LiveSignaling(this, settings, registry) else RealtimeSignaling(this, settings)
+            // Tools travel with the initial call config now (§ RealtimeSignaling), not a follow-up
+            // session.update once session.created arrives — see onEvent's session.created handling below.
+            val signaling: Signaling = if (live) LiveSignaling(this, settings, registry) else RealtimeSignaling(this, settings, registry.definitions())
             realtime = WebRtcClient(this, signaling, { if (generation == id) runCatching { if (live) onLiveEvent(it) else onEvent(it) }.onFailure { error ->
                 android.util.Log.e("Butler", "Event ${it.optString("type")}: ${error.javaClass.simpleName} at ${error.stackTrace.take(6).joinToString()}")
                 finish(Status(R.string.status_event_process_failed))
@@ -215,12 +217,22 @@ class AssistantService : Service() {
             })
         }
         when (e.optString("type")) {
-            "session.created" -> realtime?.send(JSONObject().put("type", "session.update").put("session", JSONObject().put("type", "realtime").put("tools", registry.definitions())))
-            "session.updated" -> if (state.sessionReady()) {
-                realtime?.enableMicrophone()
-                if (chimeOnReady) { chimeOnReady = false; WakeChime.play(this) }
-                status = Status(R.string.status_please_speak)
+            // Tools are sent with the initial call config now (RealtimeSignaling), not a follow-up
+            // session.update, so session.created itself is the ready event; session.updated is a no-op.
+            // Self-contained on purpose (see docs/architecture.md) in case the endpoint turns out not to
+            // accept tools this way and this needs reverting.
+            "session.created" -> {
+                if (BuildConfig.DEBUG) {
+                    val toolCount = e.optJSONObject("session")?.optJSONArray("tools")?.length() ?: 0
+                    android.util.Log.d("Butler", "session.created: session.tools=$toolCount")
+                }
+                if (state.sessionReady()) {
+                    realtime?.enableMicrophone()
+                    if (chimeOnReady) { chimeOnReady = false; WakeChime.play(this) }
+                    status = Status(R.string.status_please_speak)
+                }
             }
+            "session.updated" -> Unit
             "input_audio_buffer.speech_started" -> if (state.speechStarted()) {
                 userTranscript = ""
                 status = Status(R.string.status_listening); idle.update(SystemClock.elapsedRealtime(), true); idle.disarmShort()
