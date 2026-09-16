@@ -63,7 +63,7 @@ class WakeInstrumentation : Instrumentation() {
             }
             report.putString("stream", "\nPASS: HELLO_BUTLER (Japanese pronunciation, two fixtures), three negative fixtures (English + two Japanese), two English-pronunciation fixtures fed through unasserted, silence, cached restart; native armeabi-v7a. ${SystemClock.elapsedRealtime()-started}ms\n")
 
-            // Julius: experimental engine, spawns the real libjulius-bin.so child process. Results
+            // Julius: the default engine, spawns the real libjulius-bin.so child process. Results
             // arrive asynchronously after its VAD closes a segment, so feed() keeps polling accept()
             // (paced by an actual sleep between polls -- see feed()'s doc comment) with 100ms silence
             // chunks for up to 4s after each fixture.
