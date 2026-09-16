@@ -110,7 +110,11 @@ Four categories:
   tends to get pronounced (`h a r o: b a t o r a:`, `h a r o b a t o r a:`,
   `h a r o: b a t o r a`, `h e r o: b a t o r a:`). All four map to the same
   word string, so any of them recognizing counts as the WAKE word appearing
-  in `wseq1`/`sentence1`.
+  in `wseq1`/`sentence1`. A second phrase,「ヘイバトラー」("Hey Butler"),
+  was tried in this same category on 2026-09-17 (adding a word to an
+  existing category is a `wake.voca`/`wake.dict`-only change — the DFA,
+  which only distinguishes categories, doesn't need to be regenerated) but
+  was not kept; see "2026-09-17: Hey Butler" below for why.
 - `FILLER`: one entry per monophone in the acoustic model, each written as
   `<garbage> <phone>` — the word string is the same for every phone (only
   the pronunciation differs), so `FILLER` acts as a "match any single
@@ -314,3 +318,62 @@ Things tried that did **not** make it into the defaults:
 - `-cmalpha` was left at the Julius default (`0.05`); given the confidence
   measure separates cleanly on presence + penalty alone, tuning it wasn't
   necessary for this grammar size.
+
+## 2026-09-17: Hey Butler
+
+Vosk's `WakePhrase.HELLO_BUTLER` was extended to a second pronunciation set,
+"Hey Butler" (`ヘイ バトラー`), alongside "Hello Butler" — see
+`third_party/vosk/README.md`. The same addition was attempted here, in the
+`WAKE` category of this Julius grammar, as「ヘイバトラー」with four
+pronunciation variants (`h e i b a t o r a:`, `h e: b a t o r a:`,
+`h e i b a t o r a`, `h e: b a t o r a` — the same ー/なし and vowel-length
+pattern as「ハローバトラー」's four variants), mirrored into `wake.dict`
+with category id 2. Because this only adds a word to an existing category,
+`wake.dfa` did not need to be regenerated (the DFA distinguishes categories,
+not individual words within one).
+
+Evaluated with the shipped defaults (`--threshold 0.05 --penalty1 -0.8
+--penalty2 -0.8`) against: the positive recording (`hello-butler-ja-rec1.pcm`,
+11 spoken repetitions of "Hello Butler"), the two negative recordings
+(`japanese-speech-neg1.pcm`, 60s; `neg-librivox/*.pcm`, ~92 minutes of
+LibriVox Japanese audiobooks across 14 files), and the macOS `say` synthetic
+sets (`neg-say/chat_*.pcm`, 9 voices; `neg-say/confusable_*.pcm`, 9 voices).
+Baseline (`ハローバトラー` only, before this change): 0 false wakes on
+`japanese-speech-neg1.pcm` + LibriVox, 7 false wakes on the `say` confusable
+set (all `ハローバトラー`, unaffected by this change since its grammar
+entries weren't touched).
+
+| set | ヘイバトラー false wakes, 4 variants | ヘイバトラー false wakes, 2 variants (`h e i` only) |
+|---|---:|---:|
+| `japanese-speech-neg1.pcm` (60s) | 0 | 0 |
+| `neg-librivox/*.pcm` (~92 min, 14 files) | 8 (botchan_01: 2, botchan_02: 2, caucasus_01: 1, caucasus_02: 1, caucasus_05: 1, gongitsune_01: 1) | 5 (botchan_01: 1, botchan_02: 1, caucasus_02: 1, caucasus_05: 1, gongitsune_01: 1) |
+| `neg-say/chat_*.pcm` (9 voices) | 0 | 0 |
+| `neg-say/confusable_*.pcm` (9 voices) | 0 (all 7/voice false wakes stayed `ハローバトラー`) | 0 (same) |
+| `hello-butler-ja-rec1.pcm` positive (11 utterances) | 11/11 hit (10 as `ハローバトラー`, 1 — the 54.43–55.84s segment that decoded as pure `<garbage>` under the `ハローバトラー`-only grammar — now as `ヘイバトラー`) | same, 11/11 |
+
+Per this directory's own bar (0 false wakes on the negative recording plus
+LibriVox — the same bar `ハローバトラー` alone already clears), both
+attempts fail: the four-variant grammar produces 8 false `ヘイバトラー`
+wakes across the ~92 minutes of real Japanese speech, and dropping the two
+`h e:` (long-vowel "Hey") variants — the prescribed first mitigation, since
+they're the most confusable with the running speech's own vowel-length
+patterns — only reduces this to 5, not 0. All of these false wakes are real
+speech (LibriVox), not the synthetic `say` sets; the `say` confusable set's
+false-wake count is unaffected because it was already being explained as
+`ハローバトラー`, not `ヘイバトラー`, in every case.
+
+**Conclusion: "Hey Butler" was not added to the shipped Julius grammar.**
+`wake.voca`/`wake.dict` were reverted to their pre-2026-09-17 state
+(`ハローバトラー` only, four variants), matching the "stop and report
+instead of shipping a regression" bar this evaluation was run against.
+`WakePhrase.juliusWords` (`LocalWakeWordEngine.kt`) has one entry,
+`"ハローバトラー"`; `JuliusWake.hit` still takes a `Collection<String>` so
+a future attempt — a different acoustic model, a grammar redesign that
+isolates `ヘイ` from the filler-phone loop instead of racing it, or more
+negative real-speech data to tune against — can add to it without another
+signature change. Vosk's addition was not affected by this finding: its
+grammar-restricted ASR plus the `VoskWake.hit` word-adjacency rule is a
+different detection mechanism (an exact two-word match in a final ASR
+result, not a phone-loop confidence race), so "Hey Butler" ships there.
+Since Julius is the default engine, this means "Hey Butler" is currently
+detected only when Vosk is selected in Settings → Wake.

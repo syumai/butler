@@ -22,20 +22,24 @@ package dev.syumai.butler
  * per line read from the module socket and simply returns false for every other line (open/close tags,
  * the `.` terminator, status lines) since none of them start with `<WHYPO`.
  *
- * A `WHYPO` line only counts as a hit when its `WORD` attribute equals [wakeWord] AND its `CM`
- * (confidence measure) attribute parses as a number >= [threshold]. A missing or non-numeric `CM`
- * (Julius writes `CM="-"` when confidence-measure computation didn't run for that word) is treated as
- * not confident enough, matching the offline evaluator's behavior (`scripts/julius-eval.py`'s `is_hit`,
- * which also requires a real, present `cmscore`).
+ * A `WHYPO` line only counts as a hit when its `WORD` attribute equals any entry of [wakeWords] (a
+ * `Collection` rather than a single word so a phrase with more than one Julius-recognized pronunciation
+ * set — e.g. if a future grammar change adds one — can be checked in one call; `WakePhrase.HELLO_BUTLER`'s
+ * `juliusWords` currently has just the one entry, "ハローバトラー" — see its declaration in
+ * `LocalWakeWordEngine.kt` for why "ヘイバトラー" isn't in it) AND its `CM` (confidence measure)
+ * attribute parses as a number >= [threshold]. A missing or non-numeric `CM` (Julius writes `CM="-"`
+ * when confidence-measure computation didn't run for that word) is treated as not confident enough,
+ * matching the offline evaluator's behavior (`scripts/julius-eval.py`'s `is_hit`, which also requires a
+ * real, present `cmscore`).
  */
 object JuliusWake {
     private val ATTR = Regex("""(\w+)="([^"]*)"""")
 
-    fun hit(line: String, wakeWord: String, threshold: Double): Boolean {
+    fun hit(line: String, wakeWords: Collection<String>, threshold: Double): Boolean {
         val trimmed = line.trim()
         if (!trimmed.startsWith("<WHYPO")) return false
         val attrs = ATTR.findAll(trimmed).associate { it.groupValues[1] to it.groupValues[2] }
-        if (attrs["WORD"] != wakeWord) return false
+        if (attrs["WORD"] !in wakeWords) return false
         val cm = attrs["CM"]?.toDoubleOrNull() ?: return false
         return cm >= threshold
     }

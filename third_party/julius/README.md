@@ -104,6 +104,42 @@ Settings -> Wake, with Vosk remaining selectable as the alternative. See
 numbers come from, and `.claude/skills/wake-tuning/SKILL.md` for how to collect more real-speaker
 recordings and re-evaluate either engine.
 
+## 2026-09-17: "Hey Butler" evaluated and not shipped for Julius
+
+Vosk's wake phrase was extended to also accept "Hey Butler" (Japanese
+pronunciation), alongside "Hello Butler" — see `third_party/vosk/README.md`.
+The same addition was tried for Julius's grammar (`ヘイバトラー`, added to
+the `WAKE` category of `scripts/julius-wake/wake.voca`/`wake.dict`) and
+evaluated offline with `scripts/julius-eval.py` against the same recordings
+as the 2026-09-15 comparison above, plus the full ~92 minutes of LibriVox
+(not just `gongitsune_01`) and the macOS `say` `chat`/`confusable` sets:
+
+| set | ヘイバトラー false wakes, 4 pronunciation variants | ヘイバトラー false wakes, 2 variants (`h e:` dropped) |
+|---|---:|---:|
+| user negative 60s | 0 | 0 |
+| LibriVox ~92 min (14 files) | 8 | 5 |
+| `say` chat set (9 voices) | 0 | 0 |
+| `say` confusable set (9 voices) | 0 (its 7/voice false wakes stayed `ハローバトラー`, unaffected) | 0 (same) |
+
+Both attempts produce false wakes on real Japanese speech (LibriVox), which
+the existing `ハローバトラー`-only grammar does not (0 across the same
+~92 minutes). Dropping the grammar's two most-confusable "Hey" variants
+(`h e: b a t o r a:`/`h e: b a t o r a`, the long-vowel pronunciation) — the
+prescribed first mitigation — reduced but did not eliminate this. Per this
+project's bar (0 false wakes on real negative speech, matching what
+`ハローバトラー` alone already achieves), "Hey Butler" was **not** added to
+the shipped Julius grammar; `scripts/julius-wake/wake.voca`/`wake.dict` were
+reverted, and `WakePhrase.juliusWords` has just the one entry. See
+`scripts/julius-wake/README.md`'s "2026-09-17: Hey Butler" section for the
+full per-file breakdown and the false-positive segments themselves.
+
+Vosk's own addition was unaffected by this finding — its grammar-restricted
+ASR plus `VoskWake.hit`'s word-adjacency rule (an exact two-word match in a
+final result) is a different detection mechanism from Julius's phone-loop
+confidence race, so "Hey Butler" ships there. Since Julius is the default
+engine, "Hey Butler" is currently detected only when Vosk is selected in
+Settings → Wake.
+
 ## License files
 
 - `LICENSE`: Julius's own `LICENSE` file (BSD-3-Clause), copied verbatim from
@@ -132,5 +168,7 @@ At runtime, `JuliusWakeDecoder` unpacks the merged `julius/` asset tree (both `m
 to `File(context.filesDir, "julius")` once via the shared `AssetUnpacker` (also used by
 `VoskWakeDecoder`), the same temp-dir-then-rename-plus-`.ready`-marker approach documented in
 `third_party/vosk/README.md`'s "Model bundling" section — the marker text includes
-`BuildConfig.VERSION_CODE` so a grammar change between app versions (unlike the model, which isn't
-expected to change) triggers a re-unpack rather than being silently reused.
+`BuildConfig.VERSION_CODE` plus a CRC32 of the unpacked `wake.dict`/`wake.dfa` asset bytes (since
+2026-09-17), so a grammar change (unlike the model, which isn't expected to change) triggers a
+re-unpack even between builds that share the same version code, rather than a device that already
+unpacked the old grammar silently reusing it.

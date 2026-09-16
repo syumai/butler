@@ -27,8 +27,17 @@ import java.nio.ByteOrder
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.concurrent.thread
 
-enum class WakePhrase(val label: String, val voskPhrase: String, val juliusPhrase: String) {
-    HELLO_BUTLER("Hello Butler", "ハロー バトラー", "ハローバトラー"),
+// Vosk detects both phrases; Julius detects only ハローバトラー. Adding ヘイバトラー to Julius's
+// phone-loop grammar (scripts/julius-wake/wake.voca/wake.dict) was tried and evaluated offline
+// (scripts/julius-eval.py) on 2026-09-17, but it produced false wakes on real unrelated Japanese
+// speech (LibriVox) even after dropping its most confusable pronunciation variants, so it was not
+// shipped for Julius — see scripts/julius-wake/README.md's "2026-09-17: Hey Butler" section and
+// third_party/julius/README.md for the numbers. juliusWords intentionally has one entry, matching
+// what the shipped Julius grammar actually recognizes; JuliusWake.hit still takes a Collection so a
+// future grammar change (a different acoustic approach, or a longer/less confusable phrase) can add
+// to it without another signature change.
+enum class WakePhrase(val label: String, val voskPhrases: List<String>, val juliusWords: List<String>) {
+    HELLO_BUTLER("Hello Butler / Hey Butler", listOf("ハロー バトラー", "ヘイ バトラー"), listOf("ハローバトラー")),
 }
 
 /** The on-device decoder that watches the standby microphone stream. Samples are raw 16-bit PCM
@@ -63,7 +72,8 @@ object VoskWake {
 }
 
 /** Runs Vosk as a continuous small-vocabulary ASR restricted to the runtime grammar
- * `["<phrase>", "[unk]"]`, and reports a hit via [VoskWake.hit] on final results only. An offline eval
+ * `["<phrase1>", "<phrase2>", ..., "[unk]"]` (one entry per [WakePhrase.voskPhrases] member), and
+ * reports a hit via [VoskWake.hit] against any of those phrases, on final results only. An offline eval
  * on 2026-09-15 against ~92 minutes of unrelated Japanese speech found 25 false wakes, every one at the
  * partial-result stage and none at the final-result stage, so partials are no longer checked; this costs
  * roughly 1s of extra latency versus reacting to the first matching partial. Model assets
@@ -75,7 +85,7 @@ class VoskWakeDecoder(context: Context, phrase: WakePhrase) : WakeDecoder {
         private const val MODEL_ASSET_DIR = "vosk/vosk-model-small-ja-0.22"
         @Volatile private var logLevelSet = false
     }
-    private val voskPhrase = phrase.voskPhrase
+    private val voskPhrases = phrase.voskPhrases
     private val model: Model
     private var recognizer: Recognizer
 
@@ -85,12 +95,13 @@ class VoskWakeDecoder(context: Context, phrase: WakePhrase) : WakeDecoder {
         }
         val dir = AssetUnpacker.unpack(context, MODEL_ASSET_DIR, MODEL_ASSET_DIR, "Vosk model")
         model = Model(dir.absolutePath)
-        recognizer = Recognizer(model, 16000f, "[\"$voskPhrase\", \"[unk]\"]")
+        val grammar = (voskPhrases.map { "\"$it\"" } + "\"[unk]\"").joinToString(",", "[", "]")
+        recognizer = Recognizer(model, 16000f, grammar)
     }
 
     override fun accept(samples: ShortArray, count: Int): Boolean {
         if (!recognizer.acceptWaveForm(samples, count)) return false
-        if (VoskWake.hit(recognizer.result, voskPhrase)) { recognizer.reset(); return true }
+        if (voskPhrases.any { VoskWake.hit(recognizer.result, it) }) { recognizer.reset(); return true }
         return false
     }
     override fun restart() { recognizer.reset() }
@@ -121,8 +132,15 @@ class VoskWakeDecoder(context: Context, phrase: WakePhrase) : WakeDecoder {
  * PCM, chunked to <=1600 samples per packet), terminated by a 0-count packet. Julius may write single
  * command bytes back on that same socket (`'0'` pause / `'1'` resume); a background thread reads and
  * discards them. Results are read line-by-line from the module socket by another background thread;
- * each line is checked with [JuliusWake.hit] against [WakePhrase.juliusPhrase] and [WAKE_THRESHOLD],
+ * each line is checked with [JuliusWake.hit] against [WakePhrase.juliusWords] and [WAKE_THRESHOLD],
  * and a hit sets [wakeFlag], which [accept] polls and clears.
+ *
+ * The asset-unpack marker ([AssetUnpacker.unpack]'s `marker` argument) is not just
+ * `"julius:${BuildConfig.VERSION_CODE}"`: it also folds in a CRC32 of the `julius/grammar/wake.dict`
+ * and `julius/grammar/wake.dfa` asset bytes (see `grammarMarkerSuffix`), so editing the grammar (e.g.
+ * adding a wake phrase) without bumping the version code still forces a re-unpack on a device that
+ * already has the old grammar unpacked to `filesDir` — otherwise [AssetUnpacker] would see a matching
+ * `.ready` marker and keep serving the stale grammar forever.
  */
 class JuliusWakeDecoder(context: Context, phrase: WakePhrase) : WakeDecoder {
     companion object {
@@ -143,9 +161,22 @@ class JuliusWakeDecoder(context: Context, phrase: WakePhrase) : WakeDecoder {
         // gets ECONNREFUSED on every attempt (verified on-device: this was the actual cause of a
         // connect timeout that first looked like a slow/hung Julius process).
         private val LOOPBACK: InetAddress = InetAddress.getByAddress(byteArrayOf(127, 0, 0, 1))
+
+        // Folded into the AssetUnpacker marker (see the class doc comment) so a grammar-only change
+        // (e.g. adding a wake phrase, without bumping BuildConfig.VERSION_CODE) still invalidates an
+        // already-unpacked device's `julius/` tree instead of leaving it stuck on the old grammar.
+        // CRC32 (not a cryptographic hash) is fine here: this only needs to detect an accidental content
+        // mismatch between the app's assets and what's already unpacked to filesDir, not resist tampering.
+        private fun grammarMarkerSuffix(context: Context): String {
+            val crc = java.util.zip.CRC32()
+            for (path in listOf("julius/grammar/wake.dict", "julius/grammar/wake.dfa")) {
+                context.assets.open(path).use { input -> crc.update(input.readBytes()) }
+            }
+            return crc.value.toString(16)
+        }
     }
 
-    private val juliusWord = phrase.juliusPhrase
+    private val juliusWords = phrase.juliusWords
     private val wakeFlag = AtomicBoolean(false)
     @Volatile private var closed = false
     @Volatile private var streamFailed = false
@@ -189,7 +220,8 @@ class JuliusWakeDecoder(context: Context, phrase: WakePhrase) : WakeDecoder {
 
     init {
         val unpackStarted = System.currentTimeMillis()
-        val assetsDir = AssetUnpacker.unpack(context, ASSET_DIR, "$ASSET_DIR:${BuildConfig.VERSION_CODE}", "Julius assets")
+        val marker = "$ASSET_DIR:${BuildConfig.VERSION_CODE}:${grammarMarkerSuffix(context)}"
+        val assetsDir = AssetUnpacker.unpack(context, ASSET_DIR, marker, "Julius assets")
         unpackMs = System.currentTimeMillis() - unpackStarted
         val binary = File(context.applicationInfo.nativeLibraryDir, EXECUTABLE)
         check(binary.exists()) { "Julius executable not found at ${binary.absolutePath}" }
@@ -291,7 +323,7 @@ class JuliusWakeDecoder(context: Context, phrase: WakePhrase) : WakeDecoder {
             val reader = BufferedReader(InputStreamReader(moduleSocket.getInputStream()))
             while (true) {
                 val line = reader.readLine() ?: break
-                if (JuliusWake.hit(line, juliusWord, WAKE_THRESHOLD)) wakeFlag.set(true)
+                if (JuliusWake.hit(line, juliusWords, WAKE_THRESHOLD)) wakeFlag.set(true)
             }
             if (!closed) streamFailed = true
         } catch (_: IOException) { if (!closed) streamFailed = true }

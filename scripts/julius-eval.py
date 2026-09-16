@@ -45,7 +45,9 @@ GRAMMAR_DIR = ROOT / "scripts" / "julius-wake"
 AM_JCONF = GRAMMAR_DIR / "am.jconf"
 GRAMMAR_PREFIX = GRAMMAR_DIR / "wake"
 MODEL_DIR = ROOT / ".tools" / "julius" / "dictation-kit"
-WAKE_WORD = "ハローバトラー"
+# Both pronunciation-set members of WakePhrase.HELLO_BUTLER's juliusWords (LocalWakeWordEngine.kt) —
+# a hit on either word counts, matching JuliusWake.hit(line, wakeWords, threshold) in the app.
+WAKE_WORDS = {"ハローバトラー", "ヘイバトラー"}
 
 SAMPLE_RATE = 16000
 BYTES_PER_SAMPLE = 2
@@ -93,6 +95,7 @@ class SegmentResult:
     segment: Segment
     sentence: str = ""
     wake_cm: float | None = None  # max cmscore over WAKE occurrences, if any
+    wake_word: str | None = None  # which WAKE_WORDS member wake_cm came from
     ok: bool = True  # False if Julius produced no result for this segment
 
 
@@ -325,9 +328,11 @@ def parse_julius_output(stdout: str, segments: list[Segment]) -> list[SegmentRes
         elif line.startswith("cmscore1:"):
             cm_values = [float(x) for x in line[len("cmscore1:"):].split()]
             tokens = results[idx].sentence.split()
-            wake_cms = [cm for tok, cm in zip(tokens, cm_values) if tok == WAKE_WORD]
-            if wake_cms:
-                results[idx].wake_cm = max(wake_cms)
+            wake_hits = [(tok, cm) for tok, cm in zip(tokens, cm_values) if tok in WAKE_WORDS]
+            if wake_hits:
+                tok, cm = max(wake_hits, key=lambda pair: pair[1])
+                results[idx].wake_cm = cm
+                results[idx].wake_word = tok
     return results
 
 
@@ -360,7 +365,7 @@ def evaluate_file(
     for r in report.results:
         s = r.segment
         cm_str = f"{r.wake_cm:.3f}" if r.wake_cm is not None else "-"
-        hit_str = "  <== HIT" if is_hit(r, threshold) else ""
+        hit_str = f"  <== HIT ({r.wake_word})" if is_hit(r, threshold) else ""
         sentence = r.sentence if r.ok else "(no result)"
         print(f"  {s.start_s:6.2f}-{s.end_s:6.2f}  {sentence}  wakeCm={cm_str}{hit_str}")
 
@@ -368,9 +373,13 @@ def evaluate_file(
     wake_cms = [r.wake_cm for r in report.results if r.wake_cm is not None]
     hours = audio_seconds / 3600.0
     hits_per_hour = hits / hours if hours > 0 else 0.0
+    hits_by_word: dict[str, int] = {}
+    for r in report.results:
+        if is_hit(r, threshold) and r.wake_word is not None:
+            hits_by_word[r.wake_word] = hits_by_word.get(r.wake_word, 0) + 1
 
-    print(f"  summary: {len(report.results)} segment(s), {hits} hit(s) @ threshold={threshold}, "
-          f"{hits_per_hour:.1f} hits/hour, decode {decode_seconds:.2f}s")
+    print(f"  summary: {len(report.results)} segment(s), {hits} hit(s) @ threshold={threshold} "
+          f"({hits_by_word}), {hits_per_hour:.1f} hits/hour, decode {decode_seconds:.2f}s")
     print(f"  WAKE candidate cmscores: {[f'{c:.3f}' for c in wake_cms]}")
     print()
     return report

@@ -32,4 +32,10 @@ class VoskWakeTest {
     @Test fun blankPartialDoesNotHit() {
         assertFalse(VoskWake.hit("""{"partial": ""}""", phrase))
     }
+    @Test fun heyButlerAdjacentPairHits() {
+        assertTrue(VoskWake.hit("""{"partial": "ヘイ バトラー"}""", "ヘイ バトラー"))
+    }
+    @Test fun heyButlerWordsSeparatedByUnkDoNotHit() {
+        assertFalse(VoskWake.hit("""{"partial": "ヘイ [unk] バトラー"}""", "ヘイ バトラー"))
+    }
 }
