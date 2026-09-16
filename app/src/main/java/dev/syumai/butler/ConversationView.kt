@@ -5,13 +5,51 @@ import android.content.Context
 import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
+import android.os.SystemClock
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
+
+/** A [ScrollView] that caps its own height at [maxHeightPx] (so it grows with short text like plain
+ *  WRAP_CONTENT, then scrolls once the text would exceed that many lines) instead of relying on
+ *  START-ellipsize, which Android only honours on single-line TextViews and silently ignores on
+ *  multi-line ones — the actual bug this replaces. It also remembers when the user last dragged it,
+ *  so [scrollToBottomUnlessRecentlyTouched] can leave their position alone for a few seconds instead
+ *  of yanking them back to the newest words mid-read. */
+private class CaptionScrollView(context: Context, private val maxHeightPx: Int) : ScrollView(context) {
+    private var lastUserTouchAt = 0L
+
+    init {
+        isVerticalScrollBarEnabled = false
+        setOnTouchListener { _, event ->
+            if (event.action == MotionEvent.ACTION_DOWN || event.action == MotionEvent.ACTION_MOVE) {
+                lastUserTouchAt = SystemClock.elapsedRealtime()
+            }
+            false // don't consume: let ScrollView's own touch handling still drive the scroll.
+        }
+    }
+
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        super.onMeasure(widthMeasureSpec, MeasureSpec.makeMeasureSpec(maxHeightPx, MeasureSpec.AT_MOST))
+    }
+
+    /** Scrolls to the bottom so the newest words stay visible, unless the user dragged this view
+     *  within the last [RECENT_TOUCH_WINDOW_MS] — then their position is left alone. */
+    fun scrollToBottomUnlessRecentlyTouched() {
+        if (SystemClock.elapsedRealtime() - lastUserTouchAt < RECENT_TOUCH_WINDOW_MS) return
+        post { fullScroll(FOCUS_DOWN) }
+    }
+
+    private companion object {
+        const val RECENT_TOUCH_WINDOW_MS = 5000L
+    }
+}
 
 /**
  * Full-screen conversation overlay (§8): shown while [AssistantService.conversing] is true. Owns
@@ -58,14 +96,24 @@ class ConversationView(context: Context) : FrameLayout(context) {
 
     private val orb = OrbView(context)
 
-    private val userText = context.text(18f, "", Palette.CREAM_60).apply { maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.START }
-    private val botText = context.text(30f, "", Palette.CREAM).apply {
-        maxLines = 4; ellipsize = android.text.TextUtils.TruncateAt.START; setLineSpacing(0f, 1.35f)
+    // Bounded, auto-scrolling captions (replacing a maxLines+ellipsize(START) approach: Android only
+    // honours START ellipsizing on single-line TextViews and silently ignores it on multi-line ones,
+    // so a long transcript used to grow past the bottom of the screen instead of truncating). Each
+    // TextView sits in its own CaptionScrollView, capped at its own line count's worth of height —
+    // computed from the TextView's line height once its text size/spacing are set above — and both
+    // scroll to the bottom on every updateCaption() call so the newest words stay visible.
+    private val userText = context.text(18f, "", Palette.CREAM_60)
+    private val botText = context.text(30f, "", Palette.CREAM).apply { setLineSpacing(0f, 1.35f) }
+    private val userScroll = CaptionScrollView(context, userText.lineHeight * 2).apply {
+        addView(userText, ViewGroup.LayoutParams(-2, -2))
+    }
+    private val botScroll = CaptionScrollView(context, botText.lineHeight * 4).apply {
+        addView(botText, ViewGroup.LayoutParams(-2, -2))
     }
     private val captionFull = LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL
-        addView(userText, LinearLayout.LayoutParams(-2, -2))
-        addView(botText, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(8) })
+        addView(userScroll, LinearLayout.LayoutParams(-2, -2))
+        addView(botScroll, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(8) })
     }
 
     // Docked "bot" text uses ellipsize START (not END, unlike the single-line "you" text) so the
@@ -168,18 +216,19 @@ class ConversationView(context: Context) : FrameLayout(context) {
         }
         val resolved = status.resolve(context)
         if (resolved != lastStatusText) { lastStatusText = resolved; stateText.text = resolved }
-        updateCaption(userText, dockedUserText, userTranscript)
-        updateCaption(botText, dockedBotText, transcript)
+        updateCaption(userText, dockedUserText, userScroll, userTranscript)
+        updateCaption(botText, dockedBotText, botScroll, transcript)
         val citationsBlank = citations.isBlank()
         if (citationsBlank != lastCitationsBlank) { lastCitationsBlank = citationsBlank; sourcesButton.visibility = if (citationsBlank) GONE else VISIBLE }
         if (approvalPending != lastApprovalPending) { lastApprovalPending = approvalPending; approvalPill.visibility = if (approvalPending) VISIBLE else GONE }
     }
 
-    private fun updateCaption(full: TextView, dockedView: TextView, value: String) {
+    private fun updateCaption(full: TextView, dockedView: TextView, scroll: CaptionScrollView, value: String) {
         if (full.text.toString() == value) return
         val wasEmpty = full.text.isNullOrEmpty()
         full.text = value; dockedView.text = value
         if (wasEmpty && value.isNotEmpty()) { full.alpha = 0f; full.animate().alpha(1f).setDuration(250).start() }
+        scroll.scrollToBottomUnlessRecentlyTouched()
     }
 
     private fun setVisible(visible: Boolean) {
