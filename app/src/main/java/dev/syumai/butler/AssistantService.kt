@@ -256,9 +256,7 @@ class AssistantService : Service() {
             val id = generation
             latencyBaseMs = if (woken) wakeDetectedAt else startedAt
             logLatency("begin")
-            // Tools travel with the initial call config now (§ RealtimeSignaling), not a follow-up
-            // session.update once session.created arrives — see onEvent's session.created handling below.
-            val signaling: Signaling = if (live) LiveSignaling(this, settings, registry) else RealtimeSignaling(this, settings, registry.definitions())
+            val signaling: Signaling = if (live) LiveSignaling(this, settings, registry) else RealtimeSignaling(this, settings)
             val onWebRtcEvent: (JSONObject) -> Unit = { if (generation == id) runCatching { if (live) onLiveEvent(it) else onEvent(it) }.onFailure { error ->
                 android.util.Log.e("Butler", "Event ${it.optString("type")}: ${error.javaClass.simpleName} at ${error.stackTrace.take(6).joinToString()}")
                 finish(Status(R.string.status_event_process_failed))
@@ -309,24 +307,20 @@ class AssistantService : Service() {
             })
         }
         when (e.optString("type")) {
-            // Tools are sent with the initial call config now (RealtimeSignaling), not a follow-up
-            // session.update, so session.created itself is the ready event; session.updated is a no-op.
-            // Self-contained on purpose (see docs/architecture.md) in case the endpoint turns out not to
-            // accept tools this way and this needs reverting.
+            // Tools go in a follow-up session.update once session.created arrives, not in the initial
+            // call config: sending them with the call was tried on 2026-09-17 and delayed session.created
+            // itself by ~320ms on device (measured from the data channel opening), ~200ms more than this
+            // round trip costs, so the original ordering is kept — see docs/architecture.md "Latency".
             "session.created" -> {
                 logLatency("session.created")
-                if (BuildConfig.DEBUG) {
-                    val toolCount = e.optJSONObject("session")?.optJSONArray("tools")?.length() ?: 0
-                    android.util.Log.d("Butler", "session.created: session.tools=$toolCount")
-                }
-                if (state.sessionReady()) {
-                    realtime?.enableMicrophone()
-                    if (chimeOnReady) { chimeOnReady = false; WakeChime.play(this) }
-                    status = Status(R.string.status_please_speak)
-                    logLatency("ready/chime")
-                }
+                realtime?.send(JSONObject().put("type", "session.update").put("session", JSONObject().put("type", "realtime").put("tools", registry.definitions())))
             }
-            "session.updated" -> Unit
+            "session.updated" -> if (state.sessionReady()) {
+                realtime?.enableMicrophone()
+                if (chimeOnReady) { chimeOnReady = false; WakeChime.play(this) }
+                status = Status(R.string.status_please_speak)
+                logLatency("ready/chime")
+            }
             "input_audio_buffer.speech_started" -> if (state.speechStarted()) {
                 userTranscript = ""
                 status = Status(R.string.status_listening); idle.update(SystemClock.elapsedRealtime(), true); idle.disarmShort()

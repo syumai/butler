@@ -38,9 +38,7 @@ class ConversationState {
         return true
     }
 
-    /** session.created — tools are now sent with the initial call config (RealtimeSignaling) rather than
-     * a follow-up session.update, so session.created itself is the ready event; session.updated is a
-     * no-op. True the first time the session becomes ready — the service should enable the mic. */
+    /** session.updated. True the first time the session becomes ready — the service should enable the mic. */
     fun sessionReady(): Boolean {
         if (ready) return false
         ready = true
