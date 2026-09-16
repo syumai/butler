@@ -135,9 +135,17 @@ class AssistantService : Service() {
             status = Status(R.string.status_preparing_wake)
             val id = wakeGeneration
             wake = LocalWakeWordEngine(this, wakeModels, settings.wakePhrase, settings.wakeEngine,
-                ready = { if (id == wakeGeneration) status = message ?: Status(R.string.status_say_wake_phrase, settings.wakePhrase.label) },
+                ready = { if (id == wakeGeneration) {
+                    status = message ?: Status(R.string.status_say_wake_phrase, settings.wakePhrase.label)
+                    // Prime the pooled signaling connection as soon as standby begins, well ahead of
+                    // any wake detection — see SignalingHttp's doc comment.
+                    SignalingHttp.warm()
+                } },
                 detected = { if (id == wakeGeneration) { wake = null; begin(woken = true) } },
-                failed = { if (id == wakeGeneration) { wake = null; status = Status(R.string.status_wake_detect_failed) } })
+                failed = { if (id == wakeGeneration) { wake = null; status = Status(R.string.status_wake_detect_failed) } },
+                // Speculative re-warm on speech onset: the pooled connection from the ready callback
+                // above may have gone idle by the time the user actually speaks the wake phrase.
+                speech = { if (id == wakeGeneration) SignalingHttp.warm() })
             wake!!.start()
         }
     }

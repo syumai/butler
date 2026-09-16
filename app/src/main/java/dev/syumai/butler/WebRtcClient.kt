@@ -6,6 +6,8 @@ import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
+import android.util.Log
 import dev.syumai.butler.tools.ToolRegistry
 import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
@@ -15,6 +17,8 @@ import org.json.JSONArray
 import org.webrtc.*
 import org.webrtc.audio.JavaAudioDeviceModule
 import java.io.IOException
+import java.net.InetSocketAddress
+import java.net.Proxy
 import java.nio.ByteBuffer
 import java.util.concurrent.TimeUnit
 
@@ -85,6 +89,72 @@ class LiveSignaling(private val context: Context, private val settings: Settings
     }
 }
 
+/**
+ * Process-wide, kept-alive OkHttp client for Realtime/Live signaling calls. Previously each
+ * [WebRtcClient] built and tore down its own `OkHttpClient` (including `connectionPool.evictAll()` on
+ * close), so every conversation paid for a brand-new DNS + TCP + TLS handshake to api.openai.com — on
+ * device this was measured at ~440ms of the ~1.58s wake-to-ready timeline. Sharing one client (and
+ * never evicting its pool) lets that connection survive between conversations; [warm] additionally
+ * primes it speculatively before a conversation is even requested.
+ */
+object SignalingHttp {
+    // A handful of idle connections is plenty for one signaling host; 10 minutes comfortably spans the
+    // gap between standby conversations without holding a socket open forever.
+    private val client: OkHttpClient = OkHttpClient.Builder()
+        .connectionPool(ConnectionPool(5, 10, TimeUnit.MINUTES))
+        .callTimeout(30, TimeUnit.SECONDS)
+        .eventListenerFactory { if (BuildConfig.DEBUG) DebugEventListener() else EventListener.NONE }
+        .build()
+
+    fun newCall(request: Request): Call = client.newCall(request)
+
+    @Volatile private var lastWarmAt = 0L
+    /**
+     * Fire-and-forget: issues one cheap unauthenticated request to api.openai.com so the pooled TLS/h2
+     * connection is already up before the real signaling POST needs it. Never blocks the caller and
+     * never surfaces failure (best-effort only — the real POST still works cold if this didn't land in
+     * time), and throttled to once per [WARM_INTERVAL_MS] (via [WarmThrottle.shouldWarm]) so it isn't
+     * re-issued on every standby tick/speech segment.
+     */
+    fun warm() {
+        val now = SystemClock.elapsedRealtime()
+        if (!WarmThrottle.shouldWarm(now, lastWarmAt)) return
+        lastWarmAt = now
+        val request = Request.Builder().url("https://api.openai.com/v1/models").head().build()
+        client.newCall(request).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {}
+            override fun onResponse(call: Call, response: Response) { response.close() }
+        })
+    }
+}
+
+/** Pure throttle decision for [SignalingHttp.warm], factored out so it's unit-testable on the JVM
+ * without Android's `SystemClock` (same spirit as `IdlePolicy`: the caller passes `now`/`lastAt` in). */
+object WarmThrottle {
+    const val WARM_INTERVAL_MS = 60_000L
+    /** True if it's been at least [WARM_INTERVAL_MS] since [lastAt] (0 meaning "never warmed yet"). */
+    fun shouldWarm(now: Long, lastAt: Long, intervalMs: Long = WARM_INTERVAL_MS): Boolean = lastAt == 0L || now - lastAt >= intervalMs
+}
+
+/**
+ * Debug-only OkHttp instrumentation (tag `Butler`, prefix `latency:`) logging connection-reuse timing
+ * for one signaling call, so `adb logcat -s Butler | grep latency:` shows whether the POST to
+ * `/v1/realtime/calls` reused [SignalingHttp]'s warmed pooled connection or paid for a fresh
+ * DNS+TCP+TLS handshake. [freshConnect] is set in [connectStart]; if it's still false by
+ * [connectionAcquired], the connection came from the pool rather than being dialed for this call.
+ */
+private class DebugEventListener : EventListener() {
+    private var callStartNanos = 0L
+    private var freshConnect = false
+    private fun ms() = (System.nanoTime() - callStartNanos) / 1_000_000
+    override fun callStart(call: Call) { callStartNanos = System.nanoTime(); freshConnect = false }
+    override fun dnsStart(call: Call, domainName: String) { Log.d("Butler", "latency: http dnsStart t=${ms()}ms") }
+    override fun connectStart(call: Call, inetSocketAddress: InetSocketAddress, proxy: Proxy) { freshConnect = true; Log.d("Butler", "latency: http connectStart t=${ms()}ms") }
+    override fun secureConnectEnd(call: Call, handshake: Handshake?) { Log.d("Butler", "latency: http secureConnectEnd t=${ms()}ms") }
+    override fun connectionAcquired(call: Call, connection: Connection) { Log.d("Butler", "latency: http connectionAcquired t=${ms()}ms reused=${!freshConnect}") }
+    override fun responseHeadersEnd(call: Call, response: Response) { Log.d("Butler", "latency: http responseHeadersEnd t=${ms()}ms") }
+}
+
 /** All native lifecycle operations are serialized on the main thread. */
 class WebRtcClient(private val context: Context, private val signaling: Signaling,
     private val event: (JSONObject) -> Unit, private val failure: (Status) -> Unit) {
@@ -92,7 +162,6 @@ class WebRtcClient(private val context: Context, private val signaling: Signalin
      * never reports COMPLETE for some reason. */
     private val iceGatherTimeoutMs = 1500L
     private val main = Handler(Looper.getMainLooper())
-    private val http = OkHttpClient.Builder().callTimeout(30, TimeUnit.SECONDS).build()
     private var call: Call? = null
     private var closed = false
     private var factory: PeerConnectionFactory? = null
@@ -202,7 +271,7 @@ class WebRtcClient(private val context: Context, private val signaling: Signalin
     fun enableMicrophone() { track?.setEnabled(true) }
     fun disableMicrophone() { track?.setEnabled(false) }
     private fun connect(sdp: String) {
-        call = http.newCall(signaling.request(sdp))
+        call = SignalingHttp.newCall(signaling.request(sdp))
         call!!.enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) { fail() }
             override fun onResponse(call: Call, response: Response) {
@@ -231,10 +300,7 @@ class WebRtcClient(private val context: Context, private val signaling: Signalin
         track?.dispose(); source?.dispose(); factory?.dispose(); device?.release()
         if (hasFocus) { audio.abandonAudioFocusRequest(focus); hasFocus = false }
         audio.mode = oldMode; audio.isSpeakerphoneOn = oldSpeaker
-        // TLS close may write close_notify; Android forbids this on the UI thread.
-        kotlin.concurrent.thread(name = "Butler-http-cleanup") {
-            try { http.connectionPool.evictAll() }
-            finally { http.dispatcher.executorService.shutdown() }
-        }
+        // SignalingHttp is process-wide and kept alive across conversations (see its doc comment), so
+        // close() only needs to cancel this client's own in-flight call, not tear down the shared pool.
     }
 }

@@ -41,6 +41,12 @@ interface WakeDecoder : AutoCloseable {
     fun accept(samples: ShortArray, count: Int): Boolean
     fun restart()
     fun discardAudio()
+    /** Optional hook fired (on the wake worker thread, at most once per detected speech segment — keep
+     * it cheap) as soon as a segment of speech begins, well before the phrase itself is fully decoded —
+     * used to speculatively warm up latency-sensitive resources (the signaling HTTP connection) that
+     * would otherwise only start once the wake phrase is confirmed. [VoskWakeDecoder] has no segment
+     * concept (continuous ASR, no VAD) so its implementation never invokes this. */
+    var onSpeechStart: (() -> Unit)?
 }
 
 /** Pure keyword-adjacency check over a Vosk partial/final result JSON, no Android imports so it is
@@ -78,6 +84,8 @@ class VoskWakeDecoder(context: Context, phrase: WakePhrase) : WakeDecoder {
     private val voskPhrase = phrase.voskPhrase
     private val model: Model
     private var recognizer: Recognizer
+    // No VAD/segment concept for continuous ASR, so this is stored but never invoked.
+    override var onSpeechStart: (() -> Unit)? = null
 
     init {
         synchronized(Companion) {
@@ -150,6 +158,7 @@ class JuliusWakeDecoder(context: Context, phrase: WakePhrase) : WakeDecoder {
     @Volatile private var closed = false
     @Volatile private var streamFailed = false
     private val threads = mutableListOf<Thread>()
+    override var onSpeechStart: (() -> Unit)? = null
 
     private lateinit var process: Process
     private lateinit var moduleSocket: Socket
@@ -182,7 +191,10 @@ class JuliusWakeDecoder(context: Context, phrase: WakePhrase) : WakeDecoder {
     }
 
     private val vad = WakeVad(
-        onSegmentStart = {},
+        // Speculative latency hook (§ SignalingHttp.warm): fires on every detected speech segment, not
+        // just ones that turn out to be the wake phrase, so it must stay cheap — it does here, since
+        // onSpeechStart itself is null except while a conversation is in standby.
+        onSegmentStart = { onSpeechStart?.invoke() },
         onSegmentAudio = { samples, count -> bufferAudio(samples, count) },
         onSegmentEnd = { flushSendBuffer(); sendAdinnetEnd() },
     )
@@ -343,9 +355,11 @@ class WakeModelStore : AutoCloseable {
     @Synchronized override fun close() { cached?.close(); cached = null }
 }
 
-/** Owns the microphone and decoder on one worker; callbacks run after native cleanup. */
+/** Owns the microphone and decoder on one worker; callbacks run after native cleanup. [speech] is the
+ * optional speech-onset hook (see [WakeDecoder.onSpeechStart]) delivered on the main thread, like the
+ * other callbacks, and guarded by [stopped] the same way. */
 class LocalWakeWordEngine(private val context: Context, private val models: WakeModelStore, private val phrase: WakePhrase, private val engine: WakeEngine,
-    private val ready: () -> Unit, private val detected: () -> Unit, private val failed: () -> Unit) {
+    private val ready: () -> Unit, private val detected: () -> Unit, private val failed: () -> Unit, private val speech: () -> Unit = {}) {
     private val main = Handler(Looper.getMainLooper())
     private val lock = Any()
     private var recorder: AudioRecord? = null
@@ -358,9 +372,11 @@ class LocalWakeWordEngine(private val context: Context, private val models: Wake
         thread(name = "Butler-local-wake") {
             var hit = false
             var error = false
+            var decoder: WakeDecoder? = null
             try {
                 run {
-                    val decoder = models.acquire(context, phrase, engine)
+                    decoder = models.acquire(context, phrase, engine)
+                    decoder!!.onSpeechStart = { main.post { if (!stopped) speech() } }
                     if (!stopped) {
                         val min = AudioRecord.getMinBufferSize(16000, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
                         check(min > 0)
@@ -380,13 +396,14 @@ class LocalWakeWordEngine(private val context: Context, private val models: Wake
                             val count = mic.read(buffer, 0, buffer.size)
                             if (stopped) break
                             check(count > 0)
-                            if (decoder.accept(buffer, count)) { hit = true; break }
+                            if (decoder!!.accept(buffer, count)) { hit = true; break }
                         }
                     }
                 }
             } catch (_: Exception) { error = !stopped }
             catch (_: LinkageError) { error = !stopped }
             finally {
+                decoder?.onSpeechStart = null
                 models.discardAudio()
                 val callbacks = synchronized(lock) {
                     recorder?.let { runCatching { it.stop() }; it.release() }; recorder = null
