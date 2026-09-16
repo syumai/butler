@@ -49,16 +49,30 @@ object SearchCards {
      * half-formed, `items` beyond [MAX_ITEMS] are ignored (the schema already caps this, but the
      * model is untrusted), and each description is truncated to ~300 chars.
      */
+    private val PARENTHESIZED_LINK = Regex("""\s*[(（]\s*\[[^\]]*]\([^)]*\)\s*[)）]""")
+    private val MARKDOWN_LINK = Regex("""\[([^\]]*)]\([^)]*\)""")
+    private val BARE_URL = Regex("""\s*[(（]?https?://\S+?[)）]?(?=\s|$)""")
+
+    /** Removes the inline citations the model tends to append despite the prompt — `([site](url))`,
+     * `[label](url)` (keeping the label) and bare URLs — since both fields are spoken aloud and shown
+     * on a card, where a URL is noise; the source URL lives in [ParsedItem.url] instead. */
+    fun stripCitations(text: String): String = text
+        .replace(PARENTHESIZED_LINK, "")
+        .replace(MARKDOWN_LINK) { it.groupValues[1] }
+        .replace(BARE_URL, "")
+        .replace(Regex("[ \t]{2,}"), " ")
+        .trim()
+
     fun parse(json: String): ParsedSearch {
         val root = JSONObject(json)
-        val spoken = root.optString("spoken").trim()
+        val spoken = stripCitations(root.optString("spoken"))
         val itemsArray = root.optJSONArray("items") ?: JSONArray()
         val items = (0 until minOf(itemsArray.length(), MAX_ITEMS)).mapNotNull { i ->
             val item = itemsArray.optJSONObject(i) ?: return@mapNotNull null
             val title = item.optString("title").trim()
             val url = item.optString("url").trim()
             if (title.isEmpty() || url.isEmpty()) return@mapNotNull null
-            val description = item.optString("description").trim().take(DESCRIPTION_MAX_CHARS)
+            val description = stripCitations(item.optString("description")).take(DESCRIPTION_MAX_CHARS)
             val wikipediaTitle = item.optString("wikipedia_title").trim().takeIf { it.isNotEmpty() && it != "null" }
             val imageQuery = item.optString("image_query").trim().ifEmpty { title }
             ParsedItem(title, description, url, wikipediaTitle, imageQuery)

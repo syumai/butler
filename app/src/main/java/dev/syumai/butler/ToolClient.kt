@@ -11,11 +11,23 @@ import java.util.concurrent.TimeUnit
 private fun urlEncode(value: String): String = URLEncoder.encode(value, "UTF-8")
 
 class ToolClient {
-    private val http = OkHttpClient.Builder().callTimeout(45, TimeUnit.SECONDS).build()
+    private companion object {
+        const val IMAGE_USER_AGENT = "Butler/${BuildConfig.VERSION_NAME} (https://github.com/syumai/butler)"
+    }
+    // readTimeout matters as much as callTimeout here: OkHttp's default is 10s between bytes, and a
+    // Responses call with web_search sends nothing until the whole answer is ready (7-16s measured
+    // 2026-09-17), so without this the search tool timed out on-device before the first byte arrived.
+    private val http = OkHttpClient.Builder().callTimeout(45, TimeUnit.SECONDS).readTimeout(45, TimeUnit.SECONDS).build()
     private val haHttp = OkHttpClient.Builder().callTimeout(10, TimeUnit.SECONDS).build()
     // Short-timeout client for search-card image resolution (SearchWebTool's ~5s total budget):
     // one slow host must not eat into the budget the other tiers/items need.
-    private val imageHttp = OkHttpClient.Builder().callTimeout(4, TimeUnit.SECONDS).build()
+    // Card pictures and the Wikipedia lookups behind them. Every request carries a descriptive
+    // User-Agent (Wikimedia's policy): upload/thumb.wikimedia.org answers OkHttp's default
+    // "okhttp/4.x" agent with 403, which is exactly how the first on-device run ended up with no
+    // pictures at all (verified 2026-09-17 from the Mac: okhttp UA -> 403, this UA -> 200).
+    private val imageHttp = OkHttpClient.Builder().callTimeout(4, TimeUnit.SECONDS)
+        .addInterceptor { chain -> chain.proceed(chain.request().newBuilder().header("User-Agent", IMAGE_USER_AGENT).build()) }
+        .build()
     fun cancel() { http.dispatcher.cancelAll(); haHttp.dispatcher.cancelAll(); imageHttp.dispatcher.cancelAll() }
     private fun request(request: Request, client: OkHttpClient = http): JSONObject = client.newCall(request).execute().use {
         check(it.isSuccessful) { "HTTP ${it.code}" }
@@ -111,8 +123,7 @@ class ToolClient {
      * title 404s. A descriptive User-Agent is sent per Wikimedia's API etiquette policy. */
     fun wikipediaThumbnail(title: String, lang: String = "ja"): String? = runCatching {
         fun get(url: String): JSONObject? {
-            val call = imageHttp.newCall(Request.Builder().url(url)
-                .header("User-Agent", "Butler/${BuildConfig.VERSION_NAME} (https://github.com/syumai/butler)").build())
+            val call = imageHttp.newCall(Request.Builder().url(url).build())
             return call.execute().use { resp ->
                 if (!resp.isSuccessful) return@use null
                 val source = resp.body!!.source()

@@ -2,7 +2,9 @@ package dev.syumai.butler.tools
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.util.Log
 import android.graphics.BitmapFactory
+import dev.syumai.butler.BuildConfig
 import dev.syumai.butler.R
 import dev.syumai.butler.SearchCards
 import dev.syumai.butler.Settings
@@ -76,8 +78,9 @@ class SearchWebTool(private val context: Context, private val settings: Settings
         val url = (if (googleConfigured) client.googleImageSearch(settings, item.imageQuery) else null)
             ?: item.wikipediaTitle?.let { client.wikipediaThumbnail(it, lang) }
             ?: return null
-        val bytes = client.fetchImageBytes(url) ?: return null
-        return decodeSampled(bytes, CARD_IMAGE_MAX_PX)
+        val bytes = client.fetchImageBytes(url)
+        if (BuildConfig.DEBUG) Log.d("Butler", "card image ${item.title.take(30)}: wiki=${item.wikipediaTitle} google=$googleConfigured url=${url.take(80)} bytes=${bytes?.size}")
+        return decodeSampled(bytes ?: return null, CARD_IMAGE_MAX_PX)
     }
 
     private companion object {

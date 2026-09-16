@@ -574,7 +574,10 @@ class AssistantService : Service() {
             val result = runCatching {
                 args = JSONObject(argumentsJson.ifBlank { "{}" })
                 tool?.execute(args!!) ?: error("unknown tool $name")
-            }.getOrElse { JSONObject().put("error", getString(R.string.tool_error_generic)) }
+            }.getOrElse { error ->
+                if (BuildConfig.DEBUG) android.util.Log.w("Butler", "tool $name threw", error)
+                JSONObject().put("error", getString(R.string.tool_error_generic))
+            }
             if (BuildConfig.DEBUG) android.util.Log.i("Butler", "tool $name args=$args -> ${result.toString().take(400)}")
             main.post { if (generation == id) onResult(result) }
         }

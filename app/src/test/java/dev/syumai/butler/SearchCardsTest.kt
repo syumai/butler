@@ -5,6 +5,17 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class SearchCardsTest {
+    @Test fun stripsParenthesizedMarkdownCitations() {
+        assertEquals("世界最大のネズミの仲間です。", SearchCards.stripCitations("世界最大のネズミの仲間です。 ([zoo.sandiegozoo.org](https://zoo.sandiegozoo.org/animals/capybara?utm_source=openai))"))
+    }
+    @Test fun keepsMarkdownLinkLabelAndDropsBareUrls() {
+        assertEquals("See the San Diego Zoo page.", SearchCards.stripCitations("See the [San Diego Zoo](https://zoo.sandiegozoo.org/x) page. (https://example.com/a?b=c)"))
+    }
+    @Test fun parseStripsCitationsFromSpokenAndDescription() {
+        val result = SearchCards.parse("""{"spoken":"Big rodent. ([a.example](https://a.example/p))","items":[{"title":"T","description":"Desc ([b.example](https://b.example/q))","url":"https://b.example/q","wikipedia_title":null,"image_query":"t"}]}""")
+        assertEquals("Big rodent.", result.spoken)
+        assertEquals("Desc", result.items[0].description)
+    }
     @Test fun parsesFullItem() {
         val result = SearchCards.parse(
             """{"spoken":"A capybara is a large rodent.","items":[

@@ -34,6 +34,12 @@ import android.widget.TextView
  */
 class SearchCardsView(context: Context, private val settings: Settings) : FrameLayout(context) {
     private fun dp(value: Int) = context.dp(value)
+    private companion object {
+        // 960x480px at density 195 is ~787x393dp; with the docked conversation bar's 70dp above the
+        // strip, a 16:9 picture at this width plus one title line, three description lines and the
+        // source domain fits with the strip ending ~40dp above the bottom edge.
+        const val CARD_WIDTH_DP = 236
+    }
 
     private val queryText = context.text(13f, "", Palette.CREAM_60)
     private val cardsRow = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }
@@ -75,12 +81,15 @@ class SearchCardsView(context: Context, private val settings: Settings) : FrameL
 
         queryText.maxLines = 1; queryText.ellipsize = TextUtils.TruncateAt.END
         listContainer.addView(queryText, LinearLayout.LayoutParams(-1, -2).apply { leftMargin = dp(34); rightMargin = dp(120); topMargin = dp(6) })
-        listContainer.addView(cardsScroll, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(14); marginStart = dp(34); marginEnd = dp(34) })
+        listContainer.addView(cardsScroll, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8); marginStart = dp(34); marginEnd = dp(34) })
         addView(listContainer, LayoutParams(-1, -1).apply { topMargin = dp(70) })
 
         addView(buildDetailLayout(), LayoutParams(-1, -1).apply { topMargin = dp(70); leftMargin = dp(34); rightMargin = dp(34); bottomMargin = dp(90) })
 
-        addView(closeButton, FrameLayout.LayoutParams(dp(48), dp(48), Gravity.BOTTOM or Gravity.END).apply { rightMargin = dp(26); bottomMargin = dp(24) })
+        // Top-right, where MainActivity's settings gear sits while this viewer is hidden (the gear is
+        // hidden with the rest of the chrome while cards show, and the docked conversation bar stops
+        // 80dp short of the right edge), so the button never overlaps the card strip below.
+        addView(closeButton, FrameLayout.LayoutParams(dp(48), dp(48), Gravity.TOP or Gravity.END).apply { rightMargin = dp(34); topMargin = dp(20) })
     }
 
     private fun buildDetailLayout(): View {
@@ -127,14 +136,14 @@ class SearchCardsView(context: Context, private val settings: Settings) : FrameL
 
     private fun rebuildStrip() {
         cardsRow.removeAllViews()
-        currentCards.forEach { card -> cardsRow.addView(cardView(card), LinearLayout.LayoutParams(dp(300), -1).apply { marginEnd = dp(16) }) }
+        currentCards.forEach { card -> cardsRow.addView(cardView(card), LinearLayout.LayoutParams(dp(CARD_WIDTH_DP), -1).apply { marginEnd = dp(14) }) }
     }
 
     private fun cardView(card: SearchCards.Card): View {
         val container = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             background = cardBorder(false)
-            setPadding(dp(12), dp(12), dp(12), dp(12))
+            setPadding(dp(10), dp(10), dp(10), dp(10))
             isClickable = true
             tag = card.id
             setOnClickListener { showDetail(card) }
@@ -143,14 +152,14 @@ class SearchCardsView(context: Context, private val settings: Settings) : FrameL
         val image = ImageView(context).apply { scaleType = ImageView.ScaleType.CENTER_CROP }
         card.bitmap?.let { image.setImageBitmap(it) }
         imageFrame.addView(image, ViewGroup.LayoutParams(-1, -1))
-        container.addView(imageFrame, LinearLayout.LayoutParams(-1, dp(300) * 10 / 16))
-        container.addView(context.text(15f, "${card.id}. ${card.title}", Palette.CREAM).apply {
-            maxLines = 2; setPadding(0, dp(8), 0, 0)
+        container.addView(imageFrame, LinearLayout.LayoutParams(-1, dp(CARD_WIDTH_DP) * 9 / 16))
+        container.addView(context.text(14f, "${card.id}. ${card.title}", Palette.CREAM).apply {
+            maxLines = 1; ellipsize = TextUtils.TruncateAt.END; setPadding(0, dp(6), 0, 0)
         })
         container.addView(context.text(12f, card.description, Palette.CREAM_60).apply {
-            maxLines = 4; ellipsize = TextUtils.TruncateAt.END; setPadding(0, dp(4), 0, 0)
+            maxLines = 3; ellipsize = TextUtils.TruncateAt.END; setPadding(0, dp(3), 0, 0)
         })
-        container.addView(context.text(11f, sourceDomain(card.url), Palette.CREAM_30).apply { setPadding(0, dp(6), 0, 0) })
+        container.addView(context.text(10f, sourceDomain(card.url), Palette.CREAM_30).apply { setPadding(0, dp(4), 0, 0) })
         return container
     }
 
