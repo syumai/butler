@@ -93,7 +93,9 @@ class SearchCardsView(context: Context, private val settings: Settings) : FrameL
     // the split (picture) and full-width (text-only) layouts; only its LayoutParams change between them.
     private val fullRightColumn = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
     private val fullSplitRow = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }
-    private val fullScreenContainer = FrameLayout(context).apply { visibility = GONE }
+    // The whole full-screen mode sits on the same near-black backdrop as the picture half, so the
+    // text half (and the picture-less layout) doesn't have the clock/weather page showing through.
+    private val fullScreenContainer = FrameLayout(context).apply { visibility = GONE; background = ColorDrawable(0xEB000000.toInt()) }
 
     private val closeButton = closeButton { hide() }
 
