@@ -48,6 +48,14 @@ class ToolRegistry(private val context: Context, settings: Settings, client: Too
             add(ListHomeDevicesTool(context, settings, client))
             add(GetDeviceStatesTool(context, settings, client))
             add(ControlDevicesTool(context, settings, client))
+            // Music Assistant voice tools (docs/architecture.md "Music Assistant"): registered under
+            // the same Home Assistant URL/token gate as the tools above, since they're plain
+            // media_player/music_assistant Home Assistant services, not a separate integration to
+            // configure in Butler.
+            add(PlayMusicTool(context, settings, client))
+            add(SearchMusicTool(context, settings, client))
+            add(NowPlayingTool(context, settings, client))
+            add(ControlMusicTool(context, settings, client))
         }
     }
 

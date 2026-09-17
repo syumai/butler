@@ -308,6 +308,119 @@ class ToolClient {
             if (source.request(2 * 1_048_576 + 1)) null else source.readByteArray()
         }
     }.getOrNull()
+
+    // --- Music Assistant (see docs/architecture.md "Music Assistant" and MusicAssistant.kt) ---
+
+    /** The Music Assistant config entry id (`music_assistant.search`'s required `config_entry_id`
+     * field), fetched via `GET /api/config/config_entries/entry?domain=music_assistant` (an admin
+     * token) and cached for this `ToolClient`'s lifetime — a conversation, since `AssistantService`
+     * builds a fresh `ToolClient` per conversation — so every `search_music` call after the first in
+     * a session doesn't re-fetch it. Null (cached as such) when the list comes back empty or the
+     * request fails, meaning Music Assistant is not installed; callers report
+     * `music_assistant_not_installed` rather than retrying every call. */
+    @Volatile private var massConfigEntryId: String? = null
+    @Volatile private var massConfigEntryChecked = false
+    fun musicAssistantConfigEntryId(settings: Settings): String? {
+        if (massConfigEntryChecked) return massConfigEntryId
+        val fetched = runCatching {
+            val entries = requestArray(Request.Builder()
+                .url("${settings.get("haUrl")}/api/config/config_entries/entry?domain=music_assistant")
+                .header("Authorization", "Bearer ${settings.secret("haToken")}").build(), haHttp)
+            if (entries.length() == 0) null else entries.optJSONObject(0)?.optString("entry_id")?.takeIf { it.isNotBlank() }
+        }.getOrNull()
+        massConfigEntryId = fetched
+        massConfigEntryChecked = true
+        return fetched
+    }
+
+    /** Resolves which Music Assistant player a tool call should act on: fetches fresh `/api/states`
+     * (so a just-changed player state is seen), then applies [dev.syumai.butler.resolveMusicPlayer]
+     * against the entities carrying `mass_player_type`, preferring [playerQuery] (free text) when
+     * given, else `Settings.get("musicPlayer")`. See [dev.syumai.butler.resolveMusicPlayer] for the
+     * full precedence and result shape. */
+    fun resolveMusicAssistantPlayer(settings: Settings, playerQuery: String?): JSONObject =
+        resolveMusicPlayer(fetchStates(settings), playerQuery, settings.get("musicPlayer").takeIf { it.isNotBlank() })
+
+    /** Every Music Assistant player in the home, as `{"id","name","area"}` entries — for the Settings
+     * → Integrations "Music Assistant player" picker (raw `/api/states`, not `homeAssistantDevices`/
+     * `parseStates`, since `mass_player_type` isn't one of [STATE_ATTRIBUTES] and would otherwise be
+     * filtered out before it could be detected). */
+    fun musicAssistantPlayerList(settings: Settings): JSONArray {
+        val array = JSONArray()
+        musicAssistantPlayers(fetchStates(settings)).forEach { entity ->
+            array.put(JSONObject().put("id", entity.optString("entity_id"))
+                .put("name", playerFriendlyName(entity)).put("area", entity.optString("area")))
+        }
+        return array
+    }
+
+    /** `GET /api/states/<entityId>` — one entity's current raw state, used by the music tools to
+     * report what changed after a Music Assistant/media_player service call. */
+    fun fetchEntityState(settings: Settings, entityId: String): JSONObject =
+        request(Request.Builder().url("${settings.get("haUrl")}/api/states/$entityId")
+            .header("Authorization", "Bearer ${settings.secret("haToken")}").build(), haHttp)
+
+    /** `music_assistant.play_media` on [entityId]: [mediaId] is required (a name, an "artist - title"
+     * phrase, or a `uri` from `search_music`); [mediaType]/[artist]/[album]/[enqueue]/[radioMode] are
+     * forwarded only when given. No response data — callers re-fetch state ([fetchEntityState]) after
+     * a short wait to see what actually started playing. */
+    fun musicAssistantPlayMedia(
+        settings: Settings, entityId: String, mediaId: String, mediaType: String?, artist: String?, album: String?,
+        enqueue: String?, radioMode: Boolean?,
+    ) {
+        val body = JSONObject().put("entity_id", entityId).put("media_id", mediaId)
+        mediaType?.takeIf { it.isNotBlank() }?.let { body.put("media_type", it) }
+        artist?.takeIf { it.isNotBlank() }?.let { body.put("artist", it) }
+        album?.takeIf { it.isNotBlank() }?.let { body.put("album", it) }
+        enqueue?.takeIf { it.isNotBlank() }?.let { body.put("enqueue", it) }
+        radioMode?.let { body.put("radio_mode", it) }
+        requestArray(Request.Builder().url("${settings.get("haUrl")}/api/services/music_assistant/play_media")
+            .header("Authorization", "Bearer ${settings.secret("haToken")}")
+            .post(body.toString().toRequestBody("application/json".toMediaType())).build(), haHttp)
+    }
+
+    /** `music_assistant.search` (`?return_response`) with [configEntryId] (from
+     * [musicAssistantConfigEntryId]) and [name] (required); [mediaType]/[artist]/[album] are forwarded
+     * only when given, [limit] becomes `search_options.limit`. Returns the raw `service_response`
+     * object (categories `artists`/`albums`/`tracks`/`playlists`/`radio`/`audiobooks`/`podcasts`) for
+     * [dev.syumai.butler.compactMusicSearchResult] to reduce. */
+    fun musicAssistantSearch(
+        settings: Settings, configEntryId: String, name: String, mediaType: List<String>?, artist: String?, album: String?, limit: Int,
+    ): JSONObject {
+        val body = JSONObject().put("config_entry_id", configEntryId).put("name", name)
+        mediaType?.takeIf { it.isNotEmpty() }?.let { body.put("media_type", JSONArray(it)) }
+        artist?.takeIf { it.isNotBlank() }?.let { body.put("artist", it) }
+        album?.takeIf { it.isNotBlank() }?.let { body.put("album", it) }
+        body.put("search_options", JSONObject().put("limit", limit))
+        val response = request(Request.Builder().url("${settings.get("haUrl")}/api/services/music_assistant/search?return_response")
+            .header("Authorization", "Bearer ${settings.secret("haToken")}")
+            .post(body.toString().toRequestBody("application/json".toMediaType())).build(), haHttp)
+        return response.optJSONObject("service_response") ?: JSONObject()
+    }
+
+    /** `music_assistant.get_queue` (`?return_response`) for [entityId]. Home Assistant's
+     * `return_response` payload for a targeted service call is `{"service_response": {<entity_id>:
+     * {...}}}`; this unwraps that (falling back to the bare `service_response` object if it isn't
+     * keyed by entity_id, e.g. an older/different Home Assistant version) for
+     * [dev.syumai.butler.compactMusicQueue] to reduce. */
+    fun musicAssistantGetQueue(settings: Settings, entityId: String): JSONObject {
+        val response = request(Request.Builder().url("${settings.get("haUrl")}/api/services/music_assistant/get_queue?return_response")
+            .header("Authorization", "Bearer ${settings.secret("haToken")}")
+            .post(JSONObject().put("entity_id", entityId).toString().toRequestBody("application/json".toMediaType())).build(), haHttp)
+        val serviceResponse = response.optJSONObject("service_response") ?: return JSONObject()
+        return serviceResponse.optJSONObject(entityId) ?: serviceResponse
+    }
+
+    /** Runs a standard `media_player.*` [call] (from [dev.syumai.butler.controlMusicServiceCall]) on
+     * [entityId] and returns its fresh state afterwards — `control_music`'s direct-entity path, no
+     * `resolveDevices`-style resolution needed since the caller already resolved the player. */
+    fun runMediaPlayerServiceCall(settings: Settings, entityId: String, call: ServiceCall): JSONObject {
+        val body = JSONObject(call.data.toString()).put("entity_id", entityId)
+        requestArray(Request.Builder().url("${settings.get("haUrl")}/api/services/${call.domain}/${call.service}")
+            .header("Authorization", "Bearer ${settings.secret("haToken")}")
+            .post(body.toString().toRequestBody("application/json".toMediaType())).build(), haHttp)
+        return fetchEntityState(settings, entityId)
+    }
 }
 /** Pure parsing of a Home Assistant /api/conversation/process response into a compact model-facing result. */
 fun parseAssist(json: JSONObject): JSONObject {

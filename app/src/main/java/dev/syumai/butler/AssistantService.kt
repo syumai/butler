@@ -23,9 +23,10 @@ class AssistantService : Service() {
         var citations = ""; private set
         var approval: JSONObject? = null; private set
         var conversing = false; private set
-        /** Set (main thread) just before a `get_home_weather` tool call runs, so MainActivity's tick can
-         * switch the pager to the matching page and dock the conversation overlay over it (§9). Only the
-         * serial needs to be observed for change; [viewRequest] itself doesn't reset between requests. */
+        /** Set (main thread) just before a `get_home_weather`/`play_music`/`now_playing` tool call
+         * runs, so MainActivity's tick can switch the pager to the matching page and dock the
+         * conversation overlay over it (§9). Only the serial needs to be observed for change;
+         * [viewRequest] itself doesn't reset between requests. */
         var viewRequest = -1; private set
         var viewRequestSerial = 0; private set
         /** Bumped (main thread) whenever a device operation just completed, alongside [IdlePolicy.armShort]
@@ -35,6 +36,9 @@ class AssistantService : Service() {
         /** Injects `EXTRA_TEXT` as a user turn via [say] — sent by SearchCardsView's "read aloud" button. */
         const val SAY = "say"; const val EXTRA_TEXT = "text"
         const val VIEW_WEATHER = 1
+        /** MusicPage's pager index (see MainActivity's `home()`) — [runToolAsync] switches to it for
+         * `play_music`/`now_playing`, the same auto-switch `get_home_weather` does for [VIEW_WEATHER]. */
+        const val VIEW_MUSIC = 3
         /** After a device operation completes, how long to wait for the user to say anything else before
          * ending the conversation on its own (short-circuiting the normal, longer silence timeout). */
         private const val POST_ACTION_IDLE_MS = 5_000L
@@ -411,11 +415,11 @@ class AssistantService : Service() {
                 state.toolCallStarted(); status = Status(tool?.busyStatus ?: R.string.status_searching)
                 val id = generation
                 runToolAsync(tool, name, e.getString("arguments"), id) { result ->
-                    // A device operation just completed: if the user says nothing else, end the conversation
-                    // quickly (POST_ACTION_IDLE_MS) instead of waiting out the full silence timeout. Armed on
-                    // the main thread (like every other idle access) and only for the current conversation.
-                    if ((name == "control_devices" && result.optBoolean("done")) ||
-                        (name == "home_assistant" && result.optString("type") == "action_done")) { idle.armShort(); homeStateSerial++ }
+                    // A device/music operation just completed: if the user says nothing else, end the
+                    // conversation quickly (POST_ACTION_IDLE_MS) instead of waiting out the full silence
+                    // timeout. Armed on the main thread (like every other idle access) and only for the
+                    // current conversation.
+                    if (isDeviceOpDone(name, result)) { idle.armShort(); homeStateSerial++ }
                     citations = result.optJSONArray("content")?.toString() ?: ""
                     realtime?.send(JSONObject().put("type", "conversation.item.create").put("item", JSONObject()
                         .put("type", "function_call_output").put("call_id", callId).put("output", result.toString())))
@@ -565,8 +569,7 @@ class AssistantService : Service() {
         liveState.toolCallStarted(); status = Status(tool?.busyStatus ?: R.string.status_searching)
         val id = generation
         runToolAsync(tool, name, item.optString("arguments"), id) { result ->
-            if ((name == "control_devices" && result.optBoolean("done")) ||
-                (name == "home_assistant" && result.optString("type") == "action_done")) { idle.armShort(); homeStateSerial++ }
+            if (isDeviceOpDone(name, result)) { idle.armShort(); homeStateSerial++ }
             // search_web now runs as a client tool on Live too (see ToolRegistry.liveDefinitions), so
             // its content array needs the same citations wiring onEvent's Realtime handler already
             // has (same unconditional reset-per-call behavior, for consistency between transports) —
@@ -578,6 +581,17 @@ class AssistantService : Service() {
             liveState.toolCallFinished(); maybeLiveFollowup()
         }
     }
+    /** True when [name]'s [result] represents a device/music operation that actually changed
+     * something — the shared condition both `runToolAsync` result closures (Realtime's `onEvent` and
+     * Live's `onLiveFunctionCall`) use to arm the short post-action idle timeout and bump
+     * [homeStateSerial] so SmartHomePage/MusicPage refresh. `play_music`/`control_music` report
+     * success the same way every other music/device tool result does here: no top-level "error" key. */
+    private fun isDeviceOpDone(name: String, result: JSONObject): Boolean = when (name) {
+        "control_devices" -> result.optBoolean("done")
+        "home_assistant" -> result.optString("type") == "action_done"
+        "play_music", "control_music" -> !result.has("error")
+        else -> false
+    }
     /** Runs a tool off the main thread and posts its result back on main, shared by the Realtime and
      * Live function-call dispatch paths (which differ only in the outer envelope they send it in). */
     private fun runToolAsync(tool: Tool?, name: String, argumentsJson: String, id: Int, onResult: (JSONObject) -> Unit) {
@@ -585,6 +599,7 @@ class AssistantService : Service() {
         // synchronously before the tool actually runs on the worker below — MainActivity's tick
         // compares viewRequestSerial to switch the pager and dock the conversation overlay (§9).
         if (name == "get_home_weather") { viewRequest = VIEW_WEATHER; viewRequestSerial++ }
+        else if (name == "play_music" || name == "now_playing") { viewRequest = VIEW_MUSIC; viewRequestSerial++ }
         worker.execute {
             var args: JSONObject? = null
             val result = runCatching {
