@@ -275,6 +275,31 @@ class SettingsActivity : Activity() {
             .setView(scroll).setPositiveButton(getString(R.string.dialog_close), null).show()
     }
 
+    /** Shows the Music Assistant players fetched by the "Music Assistant player" row as a single-choice
+     * dialog (a leading "None" clears `musicPlayer`, so MusicPage/the music tools fall back to their
+     * own playing/paused/first-found default), or a plain message when Home Assistant has no Music
+     * Assistant player at all — see docs/architecture.md "Music Assistant". */
+    private fun showMusicPlayerDialog(players: JSONArray) {
+        if (isFinishing || isDestroyed) return
+        if (players.length() == 0) {
+            AlertDialog.Builder(this).setTitle(getString(R.string.settings_row_music_player))
+                .setMessage(getString(R.string.settings_music_player_none_found))
+                .setPositiveButton(getString(R.string.dialog_close), null).show()
+            return
+        }
+        val ids = mutableListOf(""); val labels = mutableListOf(getString(R.string.settings_music_player_none))
+        for (i in 0 until players.length()) {
+            val player = players.getJSONObject(i)
+            ids.add(player.optString("id"))
+            val area = player.optString("area")
+            labels.add(if (area.isBlank()) player.optString("name") else "${player.optString("name")} ($area)")
+        }
+        val selectedIndex = ids.indexOf(settings.get("musicPlayer")).coerceAtLeast(0)
+        showChoiceDialog(getString(R.string.settings_row_music_player), labels, selectedIndex) { which ->
+            settings.set("musicPlayer", ids[which]); renderCategory(selected)
+        }
+    }
+
     /** Single-choice list dialog (e.g. picking a voice from a fixed set). */
     private fun showChoiceDialog(title: String, items: List<String>, selectedIndex: Int, onPick: (Int) -> Unit) {
         AlertDialog.Builder(this).setTitle(title)
@@ -442,6 +467,17 @@ class SettingsActivity : Activity() {
                 runOnUiThread {
                     if (isFinishing || isDestroyed) return@runOnUiThread
                     result.fold({ showDevicesDialog(it) }, { Toast.makeText(this, getString(R.string.toast_ha_connect_failed, it.message), Toast.LENGTH_LONG).show() })
+                }
+            }.start()
+        }
+        addRow(rightPane, getString(R.string.settings_row_music_player), settings.get("musicPlayer").ifBlank { getString(R.string.settings_value_not_set) }) {
+            val url = settings.get("haUrl"); val token = settings.secret("haToken")
+            if (url.isBlank() || token.isBlank()) { Toast.makeText(this, getString(R.string.toast_set_url_and_token), Toast.LENGTH_LONG).show() }
+            else Thread {
+                val result = runCatching { client.musicAssistantPlayerList(settings) }
+                runOnUiThread {
+                    if (isFinishing || isDestroyed) return@runOnUiThread
+                    result.fold({ showMusicPlayerDialog(it) }, { Toast.makeText(this, getString(R.string.toast_ha_connect_failed, it.message), Toast.LENGTH_LONG).show() })
                 }
             }.start()
         }

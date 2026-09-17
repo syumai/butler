@@ -207,7 +207,12 @@ class MusicPage(
 
     private fun selectPlayer(players: List<JSONObject>): JSONObject {
         players.firstOrNull { it.optString("id") == selectedId }?.let { return it }
-        val chosen = players.firstOrNull { it.optString("state") == "playing" }
+        // Settings → Integrations "Music Assistant player" (musicPlayer), when set and present in the
+        // current device list, wins over the playing/paused/first fallback below — the same one-time
+        // preference (only applies while selectedId is still unset) the playing/paused checks already are.
+        val configured = settings.get("musicPlayer").takeIf { it.isNotBlank() }?.let { id -> players.firstOrNull { it.optString("id") == id } }
+        val chosen = configured
+            ?: players.firstOrNull { it.optString("state") == "playing" }
             ?: players.firstOrNull { it.optString("state") == "paused" }
             ?: players.first()
         selectedId = chosen.optString("id")
