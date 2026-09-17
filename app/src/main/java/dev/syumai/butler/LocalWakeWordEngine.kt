@@ -27,20 +27,22 @@ import java.nio.ByteOrder
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.concurrent.thread
 
-// Vosk and Julius both detect ハローバトラー and ヘイバトラー. ヘイバトラー was added to Julius's
-// phone-loop grammar (scripts/julius-wake/wake.voca/wake.dict) on 2026-09-17 after a first attempt
-// (same day) found its per-word confidence score (CM) alone couldn't separate genuine wake utterances
-// from false wakes on real unrelated Japanese speech (LibriVox): both ranges overlapped. A second
-// offline sweep (scripts/julius-eval.py, see scripts/julius-wake/README.md's "2026-09-17: Hey Butler"
-// section and third_party/julius/README.md) found a *structural* gate does separate them cleanly --
-// every false wake sat inside running speech with many surrounding `<garbage>` filler words, while
-// genuine wake utterances are short, standalone segments with few fillers -- so JuliusWakeDecoder now
-// judges a whole <RECOGOUT> block (JuliusWake.BlockParser) rather than a single <WHYPO> line, gating
-// on both CM and total filler count. Recall for a real speaker saying "Hey Butler" specifically is
-// unverified: no real-voice recording of "Hey Butler" exists, only rec1's single ヘイバトラー hit,
-// which is actually a misrecognized "Hello Butler" utterance -- check on-device before relying on it.
+// Vosk and Julius both detect only ハローバトラー ("Hello Butler"). A second phrase, ヘイバトラー
+// ("Hey Butler"), was added to both engines on 2026-09-17 -- Vosk's grammar directly, and Julius's
+// phone-loop grammar (scripts/julius-wake/wake.voca/wake.dict) gated on both its per-word confidence
+// score (CM) and a cap on surrounding <garbage> filler words (see JuliusWakeDecoder.MAX_FILLERS below),
+// after a first attempt gating on CM alone found its range overlapped with false wakes on real
+// unrelated Japanese speech (LibriVox). Both additions cleared their offline evaluation bar (see
+// scripts/julius-wake/README.md's "2026-09-17: Hey Butler, take two -- a structural gate" section and
+// third_party/vosk/README.md's "Hey Butler" section) and shipped the same day. Real-world on-device use
+// afterward still produced too many false wakes, so "Hey Butler" was withdrawn again on 2026-09-17,
+// back to ハローバトラー only on both engines -- see scripts/julius-wake/README.md's and
+// third_party/julius/README.md's closing notes. The filler-count gate stays on Julius even though the
+// second word it was built for is gone: the 2026-09-17 sweep found it cost no recall against
+// ハローバトラー and, as a side effect, also cleared the macOS `say`-confusable false wakes on their
+// own, so it remains a net win for the one phrase that ships.
 enum class WakePhrase(val label: String, val voskPhrases: List<String>, val juliusWords: List<String>) {
-    HELLO_BUTLER("Hello Butler / Hey Butler", listOf("ハロー バトラー", "ヘイ バトラー"), listOf("ハローバトラー", "ヘイバトラー")),
+    HELLO_BUTLER("Hello Butler", listOf("ハロー バトラー"), listOf("ハローバトラー")),
 }
 
 /** The on-device decoder that watches the standby microphone stream. Samples are raw 16-bit PCM
@@ -167,12 +169,16 @@ class JuliusWakeDecoder(context: Context, phrase: WakePhrase) : WakeDecoder {
         // -cmalpha default) cleanly separated true positives from the (presence-gated, penalty-tuned)
         // negatives in that offline sweep, so it's used unchanged as the live confidence threshold.
         const val WAKE_THRESHOLD = 0.05
-        // See scripts/julius-wake/README.md "2026-09-17: Hey Butler": CM alone doesn't separate
-        // ヘイバトラー's genuine hits from its false wakes (their ranges overlap), but the total
-        // <garbage> filler-word count in the same <RECOGOUT> block does -- every observed false wake
-        // had 11+ fillers, every genuine rec1 hit had <=6. 10 was the loosest (most permissive) value
-        // swept that still produced zero false wakes across the full negative set (japanese-speech-neg1,
-        // ~92 minutes of LibriVox, and the macOS `say` confusable set).
+        // See scripts/julius-wake/README.md "2026-09-17: Hey Butler, take two -- a structural gate":
+        // built when the grammar also had a second word, ヘイバトラー, whose CM alone didn't separate
+        // its genuine hits from its false wakes (their ranges overlap), but the total <garbage>
+        // filler-word count in the same <RECOGOUT> block did -- every observed false wake had 11+
+        // fillers, every genuine rec1 hit had <=6. 10 was the loosest (most permissive) value swept
+        // that still produced zero false wakes across the full negative set (japanese-speech-neg1,
+        // ~92 minutes of LibriVox, and the macOS `say` confusable set). ヘイバトラー was withdrawn from
+        // the grammar the same day (real-world false wakes -- see that README's closing note), but this
+        // gate stays: it cost no recall against ハローバトラー and, as a side effect, also cleared the
+        // `say`-confusable false wakes on its own, independent of the word that motivated it.
         const val MAX_FILLERS = 10
         // Explicit IPv4 loopback, not InetAddress.getLoopbackAddress(): on this device that resolves
         // to the IPv6 loopback (::1), which nothing is listening on -- Julius's adin_tcpip_standby()

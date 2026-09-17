@@ -3,7 +3,9 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class JuliusWakeTest {
-    private val wake = listOf("ハローバトラー", "ヘイバトラー")
+    // "テストワード" is a made-up second word, not a phrase Butler actually ships -- it only exercises
+    // JuliusWake's generic Collection<String> support for more than one wake word.
+    private val wake = listOf("ハローバトラー", "テストワード")
 
     @Test fun wakeWordAboveThresholdHits() {
         assertTrue(JuliusWake.hit("""    <WHYPO WORD="ハローバトラー" CLASSID="2" PHONE="h a r o: b a t o r a:" CM="0.078"/>""", wake, 0.05))
@@ -15,10 +17,10 @@ class JuliusWakeTest {
         assertFalse(JuliusWake.hit("""<WHYPO WORD="ハローバトラー" CLASSID="2" PHONE="h a r o: b a t o r a:" CM="0.02"/>""", wake, 0.05))
     }
     @Test fun secondWakeWordAboveThresholdHits() {
-        assertTrue(JuliusWake.hit("""<WHYPO WORD="ヘイバトラー" CLASSID="2" PHONE="h e i b a t o r a:" CM="0.078"/>""", wake, 0.05))
+        assertTrue(JuliusWake.hit("""<WHYPO WORD="テストワード" CLASSID="2" PHONE="t e s u t o w a: d o" CM="0.078"/>""", wake, 0.05))
     }
     @Test fun secondWakeWordBelowThresholdDoesNotHit() {
-        assertFalse(JuliusWake.hit("""<WHYPO WORD="ヘイバトラー" CLASSID="2" PHONE="h e i b a t o r a:" CM="0.02"/>""", wake, 0.05))
+        assertFalse(JuliusWake.hit("""<WHYPO WORD="テストワード" CLASSID="2" PHONE="t e s u t o w a: d o" CM="0.02"/>""", wake, 0.05))
     }
     @Test fun garbageWordDoesNotHit() {
         assertFalse(JuliusWake.hit("""<WHYPO WORD="<garbage>" CLASSID="3" PHONE="a" CM="0.9"/>""", wake, 0.05))

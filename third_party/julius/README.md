@@ -158,6 +158,25 @@ Butler" exists; the sole ヘイバトラー hit in `hello-butler-ja-rec1.pcm` is
 a misrecognized "Hello Butler" utterance, not a genuine "Hey Butler" one,
 so this should be checked on-device before relying on it.
 
+## 2026-09-17: Hey Butler withdrawn
+
+The on-device check called for above happened the same day: the user
+reported "Hey Butler" false-woke too often in real use on both engines.
+`WakePhrase.HELLO_BUTLER` was reverted to a single phrase, `"Hello
+Butler"` only (`juliusWords = listOf("ハローバトラー")`), and the two
+`ヘイバトラー` entries were removed from `scripts/julius-wake/wake.voca`/
+`wake.dict` — see `scripts/julius-wake/README.md`'s own "Hey Butler
+withdrawn" closing note for the full story.
+
+`MAX_FILLERS`/`--max-fillers 10` (`JuliusWakeDecoder`, `scripts/julius-eval.py`)
+was kept despite this: re-run with the shipped defaults against
+`hello-butler-ja-rec1.pcm` and `japanese-speech-neg1.pcm` after the
+revert, `ハローバトラー` alone still hits 10/11 spoken utterances with 0
+false wakes on the negative recording — matching the pre-Hey-Butler
+baseline in the "2026-09-15 offline comparison" table above, i.e. the gate
+cost no recall for the phrase that ships, while its independent benefit
+(clearing the macOS `say`-confusable false wakes documented above) remains.
+
 ## License files
 
 - `LICENSE`: Julius's own `LICENSE` file (BSD-3-Clause), copied verbatim from

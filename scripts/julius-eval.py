@@ -45,9 +45,11 @@ GRAMMAR_DIR = ROOT / "scripts" / "julius-wake"
 AM_JCONF = GRAMMAR_DIR / "am.jconf"
 GRAMMAR_PREFIX = GRAMMAR_DIR / "wake"
 MODEL_DIR = ROOT / ".tools" / "julius" / "dictation-kit"
-# Both pronunciation-set members of WakePhrase.HELLO_BUTLER's juliusWords (LocalWakeWordEngine.kt) —
-# a hit on either word counts, matching JuliusWake.hit(line, wakeWords, threshold) in the app.
-WAKE_WORDS = {"ハローバトラー", "ヘイバトラー"}
+# WakePhrase.HELLO_BUTLER's juliusWords (LocalWakeWordEngine.kt) — a hit on this word counts,
+# matching JuliusWake.hit(line, wakeWords, threshold) in the app. "ヘイバトラー" was evaluated and
+# shipped here on 2026-09-17, then withdrawn the same day after on-device use still false-woke too
+# often — see scripts/julius-wake/README.md's "2026-09-17: Hey Butler withdrawn" section.
+WAKE_WORDS = {"ハローバトラー"}
 
 SAMPLE_RATE = 16000
 BYTES_PER_SAMPLE = 2
@@ -349,7 +351,10 @@ def is_hit(
     duration of at most `max_segment_s` seconds. These two optional structural gates exist because
     cmscore alone doesn't separate genuine wake utterances (short, standalone) from false wakes buried
     in running speech (long segments, many surrounding filler words) -- see
-    scripts/julius-wake/README.md's "2026-09-17: Hey Butler" section.
+    scripts/julius-wake/README.md's "2026-09-17: Hey Butler, take two -- a structural gate" section.
+    The filler gate stays even after "Hey Butler" itself was withdrawn (see that README's closing
+    note): it cost no recall against `ハローバトラー` and also cleared the macOS `say`-confusable
+    false wakes on their own.
     """
     if result.wake_cm is None or result.wake_cm < threshold:
         return False

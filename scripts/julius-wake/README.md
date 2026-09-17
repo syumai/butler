@@ -477,3 +477,32 @@ misrecognition of a spoken "Hello Butler" utterance, not a genuine "Hey
 Butler" utterance, so this must be checked on-device (see
 `.claude/skills/wake-tuning/SKILL.md` for how to collect a real recording)
 before relying on it in practice.
+
+## 2026-09-17: Hey Butler withdrawn
+
+The on-device check flagged by both sections above ("recall for a real
+speaker actually saying 'Hey Butler' is unverified") was done the same day
+the two sections above shipped it: "Hey Butler" false-woke too often in
+real use on both engines. Per the user's report, `WakePhrase.HELLO_BUTLER`
+was reverted to a single phrase, `"Hello Butler"` only — `voskPhrases =
+listOf("ハロー バトラー")`, `juliusWords = listOf("ハローバトラー")` — and
+the two `ヘイバトラー` entries were removed from `wake.voca`/`wake.dict`
+(the `WAKE` category still has just `ハローバトラー`'s four pronunciation
+variants; the DFA did not need regenerating, matching the note above that
+adding/removing a word within an existing category is a
+`wake.voca`/`wake.dict`-only change).
+
+The `--max-fillers`/`MAX_FILLERS` gate described in the two sections above
+**was kept**, even though the second word it was built to separate from
+false wakes is gone: re-run with the shipped defaults (`--threshold 0.05
+--penalty1 -0.8 --penalty2 -0.8 --max-fillers 10`) against
+`hello-butler-ja-rec1.pcm` and `japanese-speech-neg1.pcm`, `ハローバトラー`
+alone still hits 10/11 spoken utterances with 0 false wakes on the negative
+recording — identical to the pre-Hey-Butler baseline in "Tuning results"
+above, i.e. the gate cost no recall for the phrase that ships. It also has
+an independent benefit documented above: it clears the macOS
+`say`-confusable false wakes (whose long, high-filler-count segments the
+gate rejects) on its own, unmodified `ハローバトラー` grammar entries
+notwithstanding. Keeping it is a strict improvement with no observed
+downside for the single-phrase grammar, so `JuliusWakeDecoder.MAX_FILLERS`
+stays at `10`.

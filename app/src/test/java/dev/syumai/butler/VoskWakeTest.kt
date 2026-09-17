@@ -32,10 +32,12 @@ class VoskWakeTest {
     @Test fun blankPartialDoesNotHit() {
         assertFalse(VoskWake.hit("""{"partial": ""}""", phrase))
     }
-    @Test fun heyButlerAdjacentPairHits() {
-        assertTrue(VoskWake.hit("""{"partial": "ヘイ バトラー"}""", "ヘイ バトラー"))
+    // "テスト ワード" is a made-up second phrase, not one Butler actually ships -- it only exercises
+    // VoskWake.hit's generic adjacency check against a phrase other than "ハロー バトラー".
+    @Test fun secondPhraseAdjacentPairHits() {
+        assertTrue(VoskWake.hit("""{"partial": "テスト ワード"}""", "テスト ワード"))
     }
-    @Test fun heyButlerWordsSeparatedByUnkDoNotHit() {
-        assertFalse(VoskWake.hit("""{"partial": "ヘイ [unk] バトラー"}""", "ヘイ バトラー"))
+    @Test fun secondPhraseWordsSeparatedByUnkDoNotHit() {
+        assertFalse(VoskWake.hit("""{"partial": "テスト [unk] ワード"}""", "テスト ワード"))
     }
 }
