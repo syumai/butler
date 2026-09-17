@@ -14,6 +14,7 @@ import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 
 /**
@@ -26,11 +27,17 @@ import android.widget.TextView
  * auto-switch docks [ConversationView] but doesn't otherwise touch the pager underneath.
  *
  * Two modes: the default horizontal card strip — picture-first, two half-width/full-height cards per
- * screen, title/description/source overlaid on the picture itself — and a full-screen picture mode
- * ([showFullScreen]) covering the whole view: the picture `FIT_CENTER` on a near-black backdrop, a
- * bottom scrim with the full title/description/source, a back arrow, and a "Read aloud" button that
- * hands the title+description to [onReadAloud] (wired by MainActivity to `AssistantService.say` via
- * its existing `action(...)`/startService plumbing) — hidden on GPT-Live, which has no verified way to
+ * screen; a card with a picture overlays title/description/source on the picture itself, a card
+ * without one ([SearchCards.Card.bitmap] null — no tier resolved one in time, or it lost the "no
+ * duplicate pictures" dedupe, see `SearchWebTool.resolveCardImages`) renders as a same-size text card
+ * instead of an empty picture tile — and a full-screen mode ([showFullScreen]) covering the whole view,
+ * split so a picture and its text never overlap: with a picture, the left half is the picture
+ * `FIT_CENTER` on a near-black backdrop and the right half is a column (back arrow, title, scrollable
+ * description, source, "Read aloud" button); without one, that same column spans the full width with
+ * wider side margins instead. The right column keeps clear of the ~70dp docked-conversation-bar zone at
+ * the top (a top margin) so the title stays readable while a conversation is docked. "Read aloud" hands
+ * the title+description to [onReadAloud] (wired by MainActivity to `AssistantService.say` via its
+ * existing `action(...)`/startService plumbing) — hidden on GPT-Live, which has no verified way to
  * inject a text turn (see `AssistantService.say`'s doc comment).
  */
 class SearchCardsView(context: Context, private val settings: Settings) : FrameLayout(context) {
@@ -45,6 +52,10 @@ class SearchCardsView(context: Context, private val settings: Settings) : FrameL
         const val CARD_GAP_DP = 14
         const val STRIP_SIDE_MARGIN_DP = 34
         const val MIN_CARD_WIDTH_DP = 120
+        // Full-screen mode's right column margins (§ applyRightColumnLayout): snug next to the picture
+        // in split mode, wide ("comfortable side margins") when it's the only thing on screen.
+        const val SPLIT_COLUMN_MARGIN_DP = 24
+        const val TEXT_ONLY_SIDE_MARGIN_DP = 64
     }
 
     private val queryText = context.text(13f, "", Palette.CREAM_60)
@@ -55,10 +66,10 @@ class SearchCardsView(context: Context, private val settings: Settings) : FrameL
     }
     private val listContainer = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
 
-    // Full-screen picture mode: fullImage (a bitmap card) and fullPlaceholder (a text-only card's
-    // glass tile) share fullPictureHolder, only one visible at a time.
+    // Full-screen mode: fullPictureHolder is the left half when the card has a picture, hidden
+    // (visibility GONE, which drops its width claim in fullSplitRow) otherwise so fullRightColumn's
+    // weight alone fills the whole width — no separate "text-only" layout to keep in sync.
     private val fullImage = ImageView(context).apply { scaleType = ImageView.ScaleType.FIT_CENTER }
-    private val fullPlaceholder = glassTile()
     private val fullPictureHolder = FrameLayout(context).apply {
         background = ColorDrawable(0xEB000000.toInt()) // near-black, ~92% opaque
         isClickable = true
@@ -66,13 +77,22 @@ class SearchCardsView(context: Context, private val settings: Settings) : FrameL
     }
     private val fullBack = iconButton(context, R.drawable.ic_arrow_back, context.getString(R.string.cards_back_description)) { showList() }
     private val fullTitle = context.text(20f, "", Palette.CREAM).apply { maxLines = 2 }
-    private val fullDescription = context.text(14f, "", Palette.CREAM_60).apply {
-        maxLines = 4; ellipsize = TextUtils.TruncateAt.END; setLineSpacing(dp(2).toFloat(), 1f)
+    // No maxLines/ellipsize: fullDescriptionScroll (below) scrolls whatever doesn't fit instead of
+    // truncating it, since a full-screen card is expected to show the whole description.
+    private val fullDescription = context.text(14f, "", Palette.CREAM_60).apply { setLineSpacing(dp(2).toFloat(), 1f) }
+    private val fullDescriptionScroll = ScrollView(context).apply {
+        isFillViewport = true
+        isVerticalScrollBarEnabled = false
+        addView(fullDescription, FrameLayout.LayoutParams(-1, -2))
     }
     private val fullSource = context.text(12f, "", Palette.CREAM_30)
     private val fullReadAloud = context.filledButton(context.getString(R.string.cards_read_aloud), 14f, Palette.BRASS) {
         fullCard?.let { card -> onReadAloud?.invoke("${card.title}. ${card.description}") }
     }
+    // Holds fullBack/fullTitle/fullDescriptionScroll/fullSource/fullReadAloud — reused as-is for both
+    // the split (picture) and full-width (text-only) layouts; only its LayoutParams change between them.
+    private val fullRightColumn = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
+    private val fullSplitRow = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }
     private val fullScreenContainer = FrameLayout(context).apply { visibility = GONE }
 
     private val closeButton = closeButton { hide() }
@@ -113,26 +133,40 @@ class SearchCardsView(context: Context, private val settings: Settings) : FrameL
         addView(closeButton, FrameLayout.LayoutParams(dp(48), dp(48), Gravity.TOP or Gravity.END).apply { rightMargin = dp(34); topMargin = dp(20) })
     }
 
+    /** Builds the full-screen split layout once: [fullSplitRow] is a horizontal row of
+     * [fullPictureHolder] (left half) and [fullRightColumn] (right half) so a picture and its text
+     * never overlap. [showFullScreen] toggles [fullPictureHolder]'s visibility between the two cases —
+     * `GONE` drops its width claim in the `LinearLayout`, so [fullRightColumn]'s own weight then fills
+     * the whole row on its own, no separate text-only layout needed — and adjusts [fullRightColumn]'s
+     * side margins ([applyRightColumnLayout]) since the split case wants it snug against the picture
+     * while the text-only case wants comfortable margins on both sides instead. */
     private fun buildFullScreenLayout(): View {
         fullPictureHolder.addView(fullImage, FrameLayout.LayoutParams(-1, -1))
-        fullPictureHolder.addView(fullPlaceholder, FrameLayout.LayoutParams(dp(320), dp(320), Gravity.CENTER))
-        fullScreenContainer.addView(fullPictureHolder, FrameLayout.LayoutParams(-1, -1))
+        fullSplitRow.addView(fullPictureHolder, LinearLayout.LayoutParams(0, -1, 1f))
 
-        // Bottom scrim: consumes all touches itself (isClickable=true) so tapping the title/description
-        // area doesn't fall through to fullPictureHolder's "tap picture to go back" listener.
-        val scrim = LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            isClickable = true
-            background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(0x00000000, 0xD9000000.toInt()))
-            setPadding(dp(24), dp(40), dp(24), dp(20))
-        }
-        scrim.addView(fullBack, LinearLayout.LayoutParams(dp(40), dp(40)))
-        scrim.addView(fullTitle, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
-        scrim.addView(fullDescription, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(6) })
-        scrim.addView(fullSource, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(4) })
-        scrim.addView(fullReadAloud, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(10) })
-        fullScreenContainer.addView(scrim, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
+        fullRightColumn.addView(fullBack, LinearLayout.LayoutParams(dp(40), dp(40)))
+        fullRightColumn.addView(fullTitle, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(16) })
+        // Height 0 + weight 1: the description claims whatever's left between the title and the
+        // source/button below, scrolling internally if the text is longer than that.
+        fullRightColumn.addView(fullDescriptionScroll, LinearLayout.LayoutParams(-1, 0, 1f).apply { topMargin = dp(10) })
+        fullRightColumn.addView(fullSource, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(8) })
+        fullRightColumn.addView(fullReadAloud, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(14) })
+        fullSplitRow.addView(fullRightColumn, LinearLayout.LayoutParams(0, -1, 1f))
+        applyRightColumnLayout(hasPicture = true)
+
+        fullScreenContainer.addView(fullSplitRow, FrameLayout.LayoutParams(-1, -1))
         return fullScreenContainer
+    }
+
+    /** [fullRightColumn]'s top margin always clears the ~70dp docked-conversation-bar zone (§ class
+     * doc); its side margins differ between the two cases — snug ([SPLIT_COLUMN_MARGIN_DP]) next to
+     * the picture in split mode, wide ([TEXT_ONLY_SIDE_MARGIN_DP], "comfortable side margins") when the
+     * column is the only thing on screen. */
+    private fun applyRightColumnLayout(hasPicture: Boolean) {
+        val sideMargin = dp(if (hasPicture) SPLIT_COLUMN_MARGIN_DP else TEXT_ONLY_SIDE_MARGIN_DP)
+        fullRightColumn.layoutParams = (fullRightColumn.layoutParams as LinearLayout.LayoutParams).apply {
+            topMargin = dp(70); bottomMargin = dp(24); leftMargin = sideMargin; rightMargin = sideMargin
+        }
     }
 
     /** Tracks the strip's actual width so each card can be exactly half of it: `(stripWidth - gap) /
@@ -182,29 +216,32 @@ class SearchCardsView(context: Context, private val settings: Settings) : FrameL
         currentCards.forEach { card -> cardsRow.addView(cardView(card), LinearLayout.LayoutParams(cardWidthPx, -1).apply { marginEnd = dp(CARD_GAP_DP) }) }
     }
 
-    /** One strip card: the picture fills the whole card (`CENTER_CROP`, rounded 18dp corners via
-     * `clipToOutline`), a text-only card gets the same neutral teal fill glassTile()/the detail view
-     * used) instead of a bitmap, and the number/title/description/source are overlaid on the picture's
-     * lower part ([cardTextOverlay]) with a highlight border drawn on top of everything ([cardBorder]),
-     * so the border always reads even though the picture goes edge-to-edge underneath it. */
-    private fun cardView(card: SearchCards.Card): View {
+    /** One strip card, sized/positioned identically either way: a picture card ([pictureCardView]) or,
+     * when [SearchCards.Card.bitmap] is null, a same-size text card ([textOnlyCardView]) rather than an
+     * empty picture tile. Both end with the same highlight-border overlay ([cardBorder]) as their last
+     * child, which [tick] relies on. */
+    private fun cardView(card: SearchCards.Card): View = if (card.bitmap != null) pictureCardView(card) else textOnlyCardView(card)
+
+    /** The picture fills the whole card (`CENTER_CROP`, rounded 18dp corners via `clipToOutline`), with
+     * the number/title/description/source overlaid on its lower part ([cardTextOverlay]) on a vertical
+     * gradient scrim (transparent → ~85% dark) so they stay readable over any picture, and a highlight
+     * border drawn on top of everything so it always reads even though the picture goes edge-to-edge
+     * underneath it. */
+    private fun pictureCardView(card: SearchCards.Card): View {
         val container = FrameLayout(context).apply {
             clipToOutline = true; outlineProvider = ViewOutlineProvider.BACKGROUND
-            background = roundedShape(dp(18).toFloat(), fill = if (card.bitmap != null) Color.TRANSPARENT else 0xFF2E6E76.toInt())
+            background = roundedShape(dp(18).toFloat(), fill = Color.TRANSPARENT)
             isClickable = true
             tag = card.id
             setOnClickListener { showFullScreen(card) }
         }
-        card.bitmap?.let { bitmap ->
-            container.addView(ImageView(context).apply { scaleType = ImageView.ScaleType.CENTER_CROP; setImageBitmap(bitmap) }, FrameLayout.LayoutParams(-1, -1))
-        }
+        container.addView(ImageView(context).apply { scaleType = ImageView.ScaleType.CENTER_CROP; setImageBitmap(card.bitmap) }, FrameLayout.LayoutParams(-1, -1))
         container.addView(cardTextOverlay(card), FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
         container.addView(View(context).apply { background = cardBorder(false) }, FrameLayout.LayoutParams(-1, -1))
         return container
     }
 
-    /** Number+title/description/source overlaid on a picture's lower part, on a vertical gradient
-     * scrim (transparent → ~85% dark) so they stay readable over any picture. */
+    /** Number+title/description/source overlaid on a picture's lower part. */
     private fun cardTextOverlay(card: SearchCards.Card): View {
         val overlay = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
@@ -221,17 +258,66 @@ class SearchCardsView(context: Context, private val settings: Settings) : FrameL
         return overlay
     }
 
-    /** Opens the full-screen picture mode for [card] (tapping a strip card, replacing the old
-     * side-by-side detail mode): the bitmap `FIT_CENTER` (or the glass tile placeholder for a
-     * text-only card), full title/description/source and the "Read aloud" button — hidden on Live,
-     * since `AssistantService.say` doesn't support it. */
+    /** A card with no picture: same size/position as a picture card, a translucent "glass" background
+     * (matches the rest of the app's glass-card look, `Ui.kt`'s [glassCard]) instead of a picture,
+     * number+title (up to 2 lines) at the top, then as much of the description as the card's actual
+     * height allows — this view's own pixel height isn't known until it's laid out (the strip only
+     * tracks card *width* up front, see [onSizeChanged]), so [description]'s `maxLines` is computed
+     * once from [title]/[source]'s measured heights in an [View.OnLayoutChangeListener] fired after the
+     * first layout pass — and the source domain pinned to the bottom via a weighted spacer. */
+    private fun textOnlyCardView(card: SearchCards.Card): View {
+        val container = FrameLayout(context).apply {
+            clipToOutline = true; outlineProvider = ViewOutlineProvider.BACKGROUND
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE; cornerRadius = dp(18).toFloat()
+                setColor(Palette.CREAM_12); setStroke(dp(1), 0x1FFFFFFF)
+            }
+            isClickable = true
+            tag = card.id
+            setOnClickListener { showFullScreen(card) }
+        }
+        val title = context.text(16f, "${card.id}. ${card.title}", Palette.CREAM).apply {
+            maxLines = 2; ellipsize = TextUtils.TruncateAt.END
+        }
+        val description = context.text(13f, card.description, Palette.CREAM_60).apply {
+            maxLines = 1; ellipsize = TextUtils.TruncateAt.END; setLineSpacing(dp(2).toFloat(), 1f)
+        }
+        val source = context.text(11f, sourceDomain(card.url), Palette.CREAM_30)
+        val column = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(14), dp(14), dp(14), dp(12))
+        }
+        column.addView(title, LinearLayout.LayoutParams(-1, -2))
+        column.addView(description, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
+        column.addView(View(context), LinearLayout.LayoutParams(-1, 0, 1f)) // spacer: pins source to the bottom
+        column.addView(source, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(6) })
+        container.addView(column, FrameLayout.LayoutParams(-1, -1))
+        container.addView(View(context).apply { background = cardBorder(false) }, FrameLayout.LayoutParams(-1, -1))
+
+        container.addOnLayoutChangeListener(object : View.OnLayoutChangeListener {
+            override fun onLayoutChange(v: View, left: Int, top: Int, right: Int, bottom: Int, oldLeft: Int, oldTop: Int, oldRight: Int, oldBottom: Int) {
+                if (bottom - top <= 0 || title.height <= 0) return
+                container.removeOnLayoutChangeListener(this)
+                val used = title.height + dp(8) + source.height + dp(6) + column.paddingTop + column.paddingBottom
+                val available = column.height - used
+                val lineHeight = description.lineHeight
+                if (lineHeight > 0 && available > 0) description.maxLines = (available / lineHeight).coerceAtLeast(1)
+            }
+        })
+        return container
+    }
+
+    /** Opens the full-screen mode for [card] (tapping a strip card): with a picture, the split
+     * layout — the bitmap `FIT_CENTER` on the left, [fullRightColumn] snug against it on the right;
+     * without one, [fullPictureHolder] is hidden ([applyRightColumnLayout] widens the column's own
+     * margins to compensate) so [fullRightColumn] spans the full width on its own. The "Read aloud"
+     * button stays hidden on Live, since `AssistantService.say` doesn't support it. */
     private fun showFullScreen(card: SearchCards.Card) {
         fullCard = card
-        if (card.bitmap != null) {
-            fullImage.setImageBitmap(card.bitmap); fullImage.visibility = VISIBLE; fullPlaceholder.visibility = GONE
-        } else {
-            fullImage.setImageBitmap(null); fullImage.visibility = GONE; fullPlaceholder.visibility = VISIBLE
-        }
+        val hasPicture = card.bitmap != null
+        fullPictureHolder.visibility = if (hasPicture) VISIBLE else GONE
+        fullImage.setImageBitmap(card.bitmap)
+        applyRightColumnLayout(hasPicture)
         fullTitle.text = "${card.id}. ${card.title}"
         fullDescription.text = card.description
         fullSource.text = sourceDomain(card.url)
@@ -270,14 +356,6 @@ class SearchCardsView(context: Context, private val settings: Settings) : FrameL
         shape = GradientDrawable.RECTANGLE; cornerRadius = dp(18).toFloat()
         setColor(Color.TRANSPARENT)
         setStroke(dp(if (highlighted) 2 else 1).coerceAtLeast(1), if (highlighted) Palette.BRASS else 0x1FFFFFFF)
-    }
-
-    /** Rounded tile used for the full-screen mode's text-only placeholder — filled with a neutral
-     * teal (matches MusicPage's artwork-frame placeholder look), so a text-only card still reads as
-     * a picture slot rather than a layout gap. */
-    private fun glassTile(): FrameLayout = FrameLayout(context).apply {
-        background = roundedShape(dp(12).toFloat(), fill = 0xFF2E6E76.toInt())
-        clipToOutline = true; outlineProvider = ViewOutlineProvider.BACKGROUND
     }
 
     private fun sourceDomain(url: String): String =
