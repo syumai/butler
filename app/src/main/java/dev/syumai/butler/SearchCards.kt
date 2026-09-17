@@ -110,6 +110,17 @@ object SearchCards {
         return prefix.length >= 4 && transcript.contains(prefix)
     }
 
+    /** Keeps a picture URL only for its first occurrence in [urls]: later occurrences of a URL already
+     * seen become null, so a card that would otherwise repeat an earlier card's picture (e.g. the model
+     * returning several items about the same subject, all naming the same Wikipedia article) instead
+     * loses its picture and renders as a text-only card. Nulls pass through unchanged; distinct URLs are
+     * untouched. Pure — used by [dev.syumai.butler.tools.SearchWebTool.resolveCardImages] after
+     * resolving every item's picture URL and before downloading any of them. */
+    fun dedupePictureUrls(urls: List<String?>): List<String?> {
+        val seen = mutableSetOf<String>()
+        return urls.map { url -> if (url != null && seen.add(url)) url else null }
+    }
+
     /** Japanese (or [lang]) Wikipedia REST summary URL for [title] (spaces as underscores, then
      * percent-encoded per MediaWiki convention). */
     fun wikipediaSummaryUrl(title: String, lang: String = "ja"): String =
@@ -121,8 +132,9 @@ object SearchCards {
         "https://$lang.wikipedia.org/w/rest.php/v1/search/page?q=" + URLEncoder.encode(query, "UTF-8") + "&limit=1"
 
     /** Debug-only fake cards for `adb shell setprop debug.butler.cards 1` (docs/architecture.md) —
-     * three canned cards with a small solid-color placeholder bitmap drawn in code (no bundled asset
-     * needed), so [SearchCardsView]'s layout can be checked on-device without a real search. */
+     * three canned picture cards with a small solid-color placeholder bitmap drawn in code (no bundled
+     * asset needed) plus one text-only card (`bitmap = null`), so [SearchCardsView]'s strip and
+     * full-screen layouts for both card kinds can be checked on-device without a real search. */
     fun debugCards(): List<Card> {
         fun placeholder(color: Int): Bitmap = Bitmap.createBitmap(320, 200, Bitmap.Config.ARGB_8888).apply {
             android.graphics.Canvas(this).drawColor(color)
@@ -134,6 +146,9 @@ object SearchCards {
                 "https://example.com/fuji", placeholder(0xFFE3B865.toInt())),
             Card(3, "Great Barrier Reef", "The world's largest coral reef system, off the coast of Queensland, Australia.",
                 "https://example.com/reef", placeholder(0xFF2E6E76.toInt())),
+            Card(4, "Text-only Card", "This card lost its picture to the dedupe rule (or none resolved in time), so " +
+                "it renders as plain text instead of an empty picture tile — title and description only, no image.",
+                "https://example.com/text-only", null),
         )
     }
 }

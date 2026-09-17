@@ -144,6 +144,26 @@ class SearchCardsTest {
         assertTrue(url.startsWith("https://en.wikipedia.org/api/rest_v1/page/summary/Mount_Fuji"))
     }
 
+    @Test fun dedupePictureUrlsKeepsFirstOccurrence() {
+        val result = SearchCards.dedupePictureUrls(listOf("https://a", "https://a", "https://a"))
+        assertEquals(listOf("https://a", null, null), result)
+    }
+
+    @Test fun dedupePictureUrlsPassesNullsThrough() {
+        val result = SearchCards.dedupePictureUrls(listOf(null, "https://a", null, "https://a"))
+        assertEquals(listOf(null, "https://a", null, null), result)
+    }
+
+    @Test fun dedupePictureUrlsLeavesDistinctUrlsUntouched() {
+        val result = SearchCards.dedupePictureUrls(listOf("https://a", "https://b", "https://c"))
+        assertEquals(listOf("https://a", "https://b", "https://c"), result)
+    }
+
+    @Test fun dedupePictureUrlsHandlesAllNulls() {
+        val result = SearchCards.dedupePictureUrls(listOf(null, null))
+        assertEquals(listOf(null, null), result)
+    }
+
     @Test fun wikipediaSearchUrlEncodesQuery() {
         val url = SearchCards.wikipediaSearchUrl("Mount Fuji", lang = "en")
         assertTrue(url.startsWith("https://en.wikipedia.org/w/rest.php/v1/search/page?q=Mount+Fuji"))

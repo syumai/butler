@@ -50,36 +50,73 @@ class SearchWebTool(private val context: Context, private val settings: Settings
             .put("shown_on_display", cards.isNotEmpty()).put("content", SearchCards.buildContent(parsed.items))
     }
 
-    /** Resolves one picture per item, in parallel (4 threads), with a ~5s total budget
-     * ([IMAGE_BUDGET_MS] via `ExecutorService.invokeAll`'s own timeout, which cancels whatever hasn't
-     * finished) — a slow/unreachable image host must never make search itself slow. The pool is
-     * created and torn down per call rather than kept as a field, since [SearchWebTool] itself is
+    /** Resolves one picture per item in two parallel phases (4 threads each, [IMAGE_BUDGET_MS] budget
+     * per phase via `ExecutorService.invokeAll`'s own timeout, which cancels whatever hasn't finished —
+     * a slow/unreachable image host must never make search itself slow): first every item's picture
+     * *URL* ([resolveImageUrl], no download yet), then — after deduping so no two cards repeat the same
+     * picture (§ below) — a download/decode pass over only the URLs that survived. Items whose URL was
+     * deduped away, or whose download/decode failed or timed out, become text-only cards. Each pool is
+     * created and torn down within the call rather than kept as a field, since [SearchWebTool] itself is
      * recreated every conversation (`ToolRegistry(this, settings, client)` in `AssistantService.begin()`)
      * and a field-held pool would leak a thread pool per conversation. */
     private fun resolveCardImages(items: List<SearchCards.ParsedItem>): List<SearchCards.Card> {
         if (items.isEmpty()) return emptyList()
         val lang = if (Locale.getDefault().language == "ja") "ja" else "en"
-        val pool = Executors.newFixedThreadPool(minOf(4, items.size))
+        val googleConfigured = settings.secret("googleCseKey").isNotBlank() && settings.get("googleCseCx").isNotBlank()
+
+        val resolved = runInParallel(items.size) { pool ->
+            val tasks = items.map { item -> Callable { resolveImageUrl(item, lang, googleConfigured) } }
+            pool.invokeAll(tasks, IMAGE_BUDGET_MS, TimeUnit.MILLISECONDS)
+        }
+
+        // The model often returns several items about the same subject (e.g. four capybara facts),
+        // all naming the same wikipedia_title — without this, every one of them would resolve to the
+        // identical Wikipedia thumbnail. A repeated title only gets a picture for its first item; later
+        // ones lose theirs even if the resolved URL string happens to differ (e.g. a redirect). This
+        // only applies to the Wikipedia tier: distinct items legitimately sharing a Google image result
+        // are caught next by the plain URL dedupe below.
+        val usedWikipediaTitles = mutableSetOf<String>()
+        val afterTitleDedup = items.indices.map { i ->
+            val r = resolved[i] ?: return@map null
+            val title = items[i].wikipediaTitle
+            if (r.fromWikipedia && title != null && !usedWikipediaTitles.add(title)) null else r.url
+        }
+        val dedupedUrls = SearchCards.dedupePictureUrls(afterTitleDedup)
+
+        val bitmaps = runInParallel(items.size) { pool ->
+            val tasks = dedupedUrls.map { url -> Callable { url?.let { downloadImage(it) } } }
+            pool.invokeAll(tasks, IMAGE_BUDGET_MS, TimeUnit.MILLISECONDS)
+        }
+        return items.mapIndexed { i, item -> SearchCards.Card(i + 1, item.title, item.description, item.url, bitmaps[i]) }
+    }
+
+    /** Runs [block] over a fixed thread pool sized to [count] (capped at 4), collecting each task's
+     * result (or null on failure/timeout/cancellation) in order; shuts the pool down either way. */
+    private fun <T> runInParallel(count: Int, block: (java.util.concurrent.ExecutorService) -> List<java.util.concurrent.Future<T>>): List<T?> {
+        val pool = Executors.newFixedThreadPool(minOf(4, count))
         try {
-            val tasks = items.map { item -> Callable { resolveImage(item, lang) } }
-            val futures = pool.invokeAll(tasks, IMAGE_BUDGET_MS, TimeUnit.MILLISECONDS)
-            return items.mapIndexed { i, item ->
-                val bitmap = runCatching { futures[i].get() }.getOrNull()
-                SearchCards.Card(i + 1, item.title, item.description, item.url, bitmap)
-            }
+            val futures = block(pool)
+            return futures.map { runCatching { it.get() }.getOrNull() }
         } finally { pool.shutdownNow() }
     }
 
-    /** One item's image, per docs/architecture.md's tiers: Google image search (only when both
-     * `googleCseKey`/`googleCseCx` are set), else the Wikipedia thumbnail (only when the model named
-     * an article), else no image — a text-only card. */
-    private fun resolveImage(item: SearchCards.ParsedItem, lang: String): Bitmap? {
-        val googleConfigured = settings.secret("googleCseKey").isNotBlank() && settings.get("googleCseCx").isNotBlank()
-        val url = (if (googleConfigured) client.googleImageSearch(settings, item.imageQuery) else null)
-            ?: item.wikipediaTitle?.let { client.wikipediaThumbnail(it, lang) }
-            ?: return null
+    private class ResolvedUrl(val url: String, val fromWikipedia: Boolean)
+
+    /** One item's picture URL (no download yet), per docs/architecture.md's tiers: Google image search
+     * (only when both `googleCseKey`/`googleCseCx` are set), else the Wikipedia thumbnail (only when the
+     * model named an article), else no image — a text-only card. */
+    private fun resolveImageUrl(item: SearchCards.ParsedItem, lang: String, googleConfigured: Boolean): ResolvedUrl? {
+        (if (googleConfigured) client.googleImageSearch(settings, item.imageQuery) else null)
+            ?.let { return ResolvedUrl(it, fromWikipedia = false) }
+        val wikiUrl = item.wikipediaTitle?.let { client.wikipediaThumbnail(it, lang) } ?: return null
+        return ResolvedUrl(wikiUrl, fromWikipedia = true)
+    }
+
+    /** Downloads and downsamples the picture at [url] (§ `CARD_IMAGE_MAX_PX`); null on any
+     * failure/timeout, same as an unresolved URL — the card just ends up text-only. */
+    private fun downloadImage(url: String): Bitmap? {
         val bytes = client.fetchImageBytes(url)
-        if (BuildConfig.DEBUG) Log.d("Butler", "card image ${item.title.take(30)}: wiki=${item.wikipediaTitle} google=$googleConfigured url=${url.take(80)} bytes=${bytes?.size}")
+        if (BuildConfig.DEBUG) Log.d("Butler", "card image url=${url.take(80)} bytes=${bytes?.size}")
         return decodeSampled(bytes ?: return null, CARD_IMAGE_MAX_PX)
     }
 
