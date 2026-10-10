@@ -19,6 +19,96 @@
   This grammar is Butler's own work, not part of the Dictation Kit distribution, so it isn't covered by
   the Dictation Kit license.
 
+## Windowsでのモデル取得・復旧（2026-10-10）
+
+固定コミット `1ceb4dec245ef482918ca33c55c71d383dce145e` の
+`model/phone_m/` にある両モデルはGit LFS管理です。`raw.githubusercontent.com` は
+モデル本体ではなくLFSポインタを返します。取得先は以下です。
+
+```text
+https://media.githubusercontent.com/media/julius-speech/dictation-kit/1ceb4dec245ef482918ca33c55c71d383dce145e/model/phone_m/jnas-tri-3k16-gid.binhmm
+https://media.githubusercontent.com/media/julius-speech/dictation-kit/1ceb4dec245ef482918ca33c55c71d383dce145e/model/phone_m/logicalTri-3k16-gid.bin
+```
+
+| ファイル | バイト数 | SHA-256（LFS oidおよび既存のSHA256SUMSと一致） |
+| --- | ---: | --- |
+| jnas-tri-3k16-gid.binhmm | 11287607 | `5f427fa11189a4d49de9a9ef51e8b1159971ee1cf5e3656f42081cf69dbf0c98` |
+| logicalTri-3k16-gid.bin | 1213799 | `bb4673040fd2691b53dea5bc411dead26732336a5c997fb0f86f93818bbfac66` |
+
+`fetchDeps` はWindowsではGit for WindowsのBashを起動し、Linux/macOSでは`bash`を使います。
+毎回キャッシュとアセットをSHA-256で検証し、不正なキャッシュは再取得、欠損・破損した
+アセットは検証済みキャッシュから修復します。ダウンロードは一時ファイルに保存し、
+HTTPエラー、LFSポインタ、チェックサム不一致の場合は非ゼロ終了してビルドを止めます。
+WindowsのCRLF形式のチェックサム一覧にも対応しています。
+
+PowerShellからプロジェクトのルートで実行します（`-x fetchDeps` は不要です）。
+
+```powershell
+.\gradlew.bat assembleDebug testDebugUnitTest
+```
+
+Git Bashを独自の場所へインストールした場合は、実際のパスを指定できます。
+
+```powershell
+$env:BUTLER_BASH = 'D:\Tools\Git\bin\bash.exe'
+.\gradlew.bat assembleDebug
+```
+
+取得処理の回帰テストはGit Bashで `bash scripts/test-fetch-deps.sh` を実行します。
+ネットワークを使わず、HTTP失敗、ポインタ、HTTP 200の不正内容、CRLF、キャッシュ再取得、
+アセット修復を独立した一時ディレクトリで確認します。
+
+### Echo Showへの再インストールと確認
+
+以下はPowerShell用です。`$serial` は `adb devices -l` に表示された端末番号へ置き換えます。
+`install -r` で設定を保持したまま上書きします。アンインストールやアプリデータ消去は不要です。
+
+```powershell
+$adb = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
+& $adb devices -l
+$serial = 'G091MK0824440272'
+& $adb -s $serial install -r .\app\build\outputs\apk\debug\app-debug.apk
+& $adb -s $serial shell am start -n dev.syumai.butler/.MainActivity
+```
+
+設定でJuliusと「呼びかけを待つ」を有効にし、マイク権限を許可します。
+ログは別のPowerShellで起動前から取得すると、端末による古いログの間引きを避けられます。
+
+```powershell
+$adb = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
+& $adb -s G091MK0824440272 logcat 'Butler:I' '*:S'
+```
+
+`Julius models verified at .../files/julius` と
+`Julius ready: model loaded and audio/module sockets connected (...)` が準備完了の目印です。
+古い `.ready` が残っていても、モデル欠損・破損を検出するとAPKから再展開します。
+失敗時は不足パス、チェックサム、コピー元・先と例外をlogcatへ出力します。
+`wake.dfa.forward` が開けないというJulius自身の出力は既存の任意ファイル探索に伴うもので、
+モデル欠損エラーとは異なります（[既存のビルド記録](../../scripts/build-julius-android.md#2d-cleanup)直前の注意事項も参照）。
+
+端末内のSHA-256は次で確認できます。
+
+```powershell
+& $adb -s $serial shell run-as dev.syumai.butler sha256sum files/julius/model/jnas-tri-3k16-gid.binhmm files/julius/model/logicalTri-3k16-gid.bin
+```
+
+静かな場所で「ハロー、バトラー」と自然に発話し、応答音や「お話しください」などの
+会話開始表示を確認します。APIキー未設定時は検出後に設定案内が表示されます。
+数回繰り返し、再起動後も確認してください。Voskに切り替えて同じ確認も行えます。
+録音済み合成音声の試験だけでは人の声での検出成功を保証できません。
+
+### 今回の検証結果
+
+- Windowsで `assembleDebug testDebugUnitTest` 成功、単体テスト247件成功。
+- 取得処理の回帰テスト6ケース成功。
+- APK内のJuliusモデル2個、Voskモデル16ファイルのSHA-256一致、文法2個とarmeabi-v7a実行ファイルの同梱を確認。
+- 接続されたEcho Show 5第2世代（CRONOS）へ上書きインストール成功。
+  端末内モデル2個のSHA-256一致、および実機ログのJulius準備完了（825ms）を確認。
+- 人の声によるウェイクワード検出、Linux/macOSでの実行は未確認。
+- `assembleDebugAndroidTest` は既存の `AudioSmoke.kt` と `WebRtcClient` のAPI不整合
+  （コンストラクタ引数過多・`start` 未解決など）で失敗。通常APKのビルドと上記実機起動は成功。
+  既存のVosk/Julius音声フィクスチャによる実機テストは未実行。
+
 ## License obligations and how they're met
 
 The Dictation Kit license (`DICTATION-KIT-LICENSE.txt`) permits free use and redistribution provided

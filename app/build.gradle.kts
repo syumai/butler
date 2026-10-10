@@ -1,13 +1,33 @@
+import java.io.File
+
 plugins { id("com.android.application"); id("org.jetbrains.kotlin.android") }
 
-val requiredDeps = listOf(
-    layout.projectDirectory.file("src/main/assets/vosk/vosk-model-small-ja-0.22/am/final.mdl").asFile,
-    layout.projectDirectory.file("src/main/assets/julius/model/jnas-tri-3k16-gid.binhmm").asFile,
-    layout.projectDirectory.file("src/main/assets/julius/model/logicalTri-3k16-gid.bin").asFile,
-)
 val fetchDeps = tasks.register<Exec>("fetchDeps") {
-    commandLine(rootDir.resolve("scripts/fetch-deps.sh").absolutePath)
-    onlyIf { requiredDeps.any { !it.exists() } }
+    workingDir(rootDir)
+    val script = rootDir.resolve("scripts/fetch-deps.sh").invariantSeparatorsPath
+    if (System.getProperty("os.name").startsWith("Windows", ignoreCase = true)) {
+        // Avoid Windows' WSL bash.exe; use Git for Windows, including per-user/custom installs.
+        val override = providers.gradleProperty("butler.bash").orNull
+            ?: providers.environmentVariable("BUTLER_BASH").orNull
+        val candidates = listOfNotNull(
+            System.getenv("ProgramFiles")?.let { file("$it/Git/bin/bash.exe") },
+            System.getenv("ProgramFiles(x86)")?.let { file("$it/Git/bin/bash.exe") },
+            System.getenv("LOCALAPPDATA")?.let { file("$it/Programs/Git/bin/bash.exe") },
+        ) + System.getenv("PATH").orEmpty().split(File.pathSeparator).mapNotNull {
+            val dir = file(it.trim('"'))
+            if (dir.resolve("git.exe").isFile) dir.parentFile?.resolve("bin/bash.exe") else null
+        }
+        val bash = if (override != null) file(override) else candidates.firstOrNull { it.isFile }
+        doFirst {
+            check(bash?.isFile == true) {
+                "Git Bash not found. Install Git for Windows or set BUTLER_BASH / -Pbutler.bash to its bash.exe path."
+            }
+        }
+        commandLine(bash?.absolutePath ?: "bash.exe", script)
+    } else {
+        commandLine("bash", script)
+    }
+    // Always verify hashes: existence alone would accept truncated files or LFS pointers.
 }
 
 // scripts/julius-wake/ is the single source of truth for the Julius wake grammar; this task copies its

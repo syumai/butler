@@ -161,6 +161,11 @@ class JuliusWakeDecoder(context: Context, phrase: WakePhrase) : WakeDecoder {
     companion object {
         private const val ASSET_DIR = "julius"
         private const val EXECUTABLE = "libjulius-bin.so"
+        // Pinned Dictation Kit LFS object hashes; keep in sync with third_party/julius/SHA256SUMS.
+        private val MODEL_SHA256 = mapOf(
+            "model/jnas-tri-3k16-gid.binhmm" to "5f427fa11189a4d49de9a9ef51e8b1159971ee1cf5e3656f42081cf69dbf0c98",
+            "model/logicalTri-3k16-gid.bin" to "bb4673040fd2691b53dea5bc411dead26732336a5c997fb0f86f93818bbfac66",
+        )
         private const val CONNECT_TIMEOUT_MS = 15_000L
         private const val CONNECT_RETRY_MS = 100L
         private const val LOG_INTERVAL_MS = 500L
@@ -214,8 +219,8 @@ class JuliusWakeDecoder(context: Context, phrase: WakePhrase) : WakeDecoder {
     private lateinit var adinnetSocket: Socket
     private lateinit var adinnetOut: OutputStream
 
-    /** Time spent unpacking the Julius asset tree ([AssetUnpacker.unpack]; 0 if it was already unpacked
-     * and the `.ready` marker matched) and time from process spawn to both sockets connected —
+    /** Time spent verifying/unpacking the Julius asset tree ([AssetUnpacker.unpack]) and time from
+     * process spawn to both sockets connected —
      * exposed for `WakeInstrumentation` to report; not used by the decoder itself. */
     val unpackMs: Long
     var startupMs: Long = 0
@@ -251,7 +256,8 @@ class JuliusWakeDecoder(context: Context, phrase: WakePhrase) : WakeDecoder {
     init {
         val unpackStarted = System.currentTimeMillis()
         val marker = "$ASSET_DIR:${BuildConfig.VERSION_CODE}:${grammarMarkerSuffix(context)}"
-        val assetsDir = AssetUnpacker.unpack(context, ASSET_DIR, marker, "Julius assets")
+        val assetsDir = AssetUnpacker.unpack(context, ASSET_DIR, marker, "Julius assets", MODEL_SHA256)
+        Log.i("Butler", "Julius models verified at ${assetsDir.absolutePath}")
         unpackMs = System.currentTimeMillis() - unpackStarted
         val binary = File(context.applicationInfo.nativeLibraryDir, EXECUTABLE)
         check(binary.exists()) { "Julius executable not found at ${binary.absolutePath}" }
@@ -288,6 +294,7 @@ class JuliusWakeDecoder(context: Context, phrase: WakePhrase) : WakeDecoder {
             throw e
         }
         startupMs = System.currentTimeMillis() - spawnStarted
+        Log.i("Butler", "Julius ready: model loaded and audio/module sockets connected (${startupMs}ms)")
         threads += thread(name = "Butler-julius-module") { readModule() }
         threads += thread(name = "Butler-julius-adcmd") { readAdinnetCommands() }
     }
@@ -314,7 +321,9 @@ class JuliusWakeDecoder(context: Context, phrase: WakePhrase) : WakeDecoder {
         try {
             BufferedReader(InputStreamReader(stream)).forEachLine { line ->
                 val now = System.currentTimeMillis()
-                if (now - lastLog > LOG_INTERVAL_MS) { Log.d("Butler", "$tag: $line"); lastLog = now }
+                if (line.contains("ERROR", ignoreCase = true) || line.contains("failed", ignoreCase = true)) {
+                    Log.e("Butler", "$tag: $line")
+                } else if (now - lastLog > LOG_INTERVAL_MS) { Log.d("Butler", "$tag: $line"); lastLog = now }
             }
         } catch (_: IOException) { /* stream closed on shutdown */ }
     }
@@ -450,8 +459,13 @@ class LocalWakeWordEngine(private val context: Context, private val models: Wake
                         }
                     }
                 }
-            } catch (_: Exception) { error = !stopped }
-            catch (_: LinkageError) { error = !stopped }
+            } catch (e: Exception) {
+                error = !stopped
+                if (error) Log.e("Butler", "$engine wake-word engine failed", e)
+            } catch (e: LinkageError) {
+                error = !stopped
+                if (error) Log.e("Butler", "$engine wake-word native library failed", e)
+            }
             finally {
                 decoder?.onSpeechStart = null
                 models.discardAudio()
